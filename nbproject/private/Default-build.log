@@ -1,0 +1,24 @@
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  conio.c -o bin/conio.o	
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  math.c -o bin/math.o	
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  utils.c -o bin/utils.o	
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  errno.c -o bin/errno.o	
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  line.c -o bin/line.o
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  buffer.c -o bin/buffer.o
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  config.c -o bin/config.o
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  editor.c -o bin/editor.o
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  ui.c -o bin/ui.o
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  clipboard.c -o bin/clipboard.o		
+gcc  -c -g -Wall -Wfatal-errors -Wno-array-bounds -Wno-discarded-qualifiers -DDEBUG_MODE_ENABLED  klein.c -o bin/klein.o
+gcc -Os \
+	    bin/conio.o \
+	    bin/math.o \
+	    bin/utils.o \
+	    bin/errno.o \
+	    bin/line.o \
+	    bin/buffer.o \
+	    bin/config.o \
+	    bin/editor.o \
+	    bin/ui.o \
+	    bin/clipboard.o \
+	    bin/klein.o \
+	    -o bin/klein-debug -lcurses

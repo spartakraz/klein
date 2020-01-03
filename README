@@ -1,0 +1,65 @@
+********************************
+* README for the Klein project *
+********************************
+
+ABOUT
+-----
+
+KLEIN is a small and simple single-file C program which implements a
+minimalist 64-bit text editor for the Linux terminal. Though its original purpose is 
+to edit small shell script files, you can use it for editing small
+source code and configuration files as well. The editor allows you to test your  
+scripts right from within its environment.
+
+DEPENDENCIES
+------------
+
+KLEIN's dependencies are few - libc and curses libraries, namely 
+their glibc and ncurses implementations respectively. By default 
+the ncurses library is statically linked to the program at the stage of 
+compilation so you do not need to install the library separately on your machine.
+ 
+INSTALLATION
+------------
+
+Change to the directory with the program's source files and run 'make' to
+build the program's executable file. Then run 'make install' as root
+to install it to /usr/bin directory of your machine. If you want to uninstall
+the program just run 'make uninstall' as root.
+ 
+STARTING KLEIN
+--------------
+
+Run the program from the command line as: 'klein <filename>', where <filename>
+is name of the file to open. If you do not specify the filename 
+the program will not start. You can view the program's help using 'klein -h'
+command. To view the program's version run the 'klein -v' command.
+ 
+DEVELOPMENT
+-----------
+
+KLEIN is written in the C programming language using gcc, glibc and ncurses.
+The development is done under the Debian operating system (version 9.4, 64 bit).
+
+FEATURES
+--------
+
+At the current stage of development, KLEIN is excessively simple and 
+offers only minimal, the most essential functionality. It offers
+very limited customization options and among others lacks such useful 
+features as regex search and syntax highlighting. 
+
+MANUAL
+------
+
+See file MANUAL.
+
+COPYRIGHT
+---------
+
+KLEIN is copyrighted under the GNU General Public License.
+See file COPYING 
+
+CONTACT
+-------
+spartakrz@outlook.com

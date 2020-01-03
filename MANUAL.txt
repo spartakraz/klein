@@ -1,0 +1,150 @@
+1. ABOUT
+
+Klein is a simple text editor for a Linux terminal. It's primary purpose is to 
+edit and test shell script files. However, it can also be used for editing other
+kinds of files as well, e.g., READMEs, configuration files, source code files
+etc. 
+
+--------------------------------------------------------------------------------
+
+2. INSTALL
+
+First make sure that you have ncurses libs and headers installed on you machine.
+Then run
+
+$ make && sudo make install
+
+from within the directory with the program's source files
+
+--------------------------------------------------------------------------------
+
+3. TABS vs SPACES
+
+Klein is very tab unfriendly, meaning that it always replaces tabs with spaces.
+When you load a file, each tab character ('\t') in it is replaced by 
+a space character (' '). And when you hit the TAB key the editor inserts spaces.
+
+--------------------------------------------------------------------------------
+
+4. STARTING KLEIN
+
+To start the program, just type
+
+$ klein <filename>
+
+where <filename> is name of the file you want to edit. If the file doesn't exist
+it is created automatically.
+
+To get the program's help, type
+
+$ klein -h
+
+To learn the program's version,
+
+type
+
+$ klein -v
+
+--------------------------------------------------------------------------------
+
+5. EXITING KLEIN
+
+Hit the F10 key.
+
+--------------------------------------------------------------------------------
+
+6. USING KLEIN
+
+((
+  CTRL+<chr>   means hold down the Control key while typing the character <chr>.
+  META-<chr>   means hold down the ALT key while typing the character <chr>.
+))
+
+To get some data from the user, the program uses an input dialog, 
+appearing at the bottom of the program's screen. In many cases the input dialog 
+contains some default value. After entering his data, the user hits the RETURN 
+key to confirm or the ESC key to cancel. 
+
+Each file opened by the user is stored in its own buffer. To open a file, hit 
+the F2 key and then enter the file name in the input dialog which follows. To 
+save current file, hit the F3 key and then confirm the file name in the input
+dialog which follows. You can change this name if you wish. To save all open 
+files, hit the F4 key. To view the list of open files, hit the F5 key. To remove
+the current buffer, hit the F6 key. To get info about the current file, hit the
+F7 key. The info will appear at the bottom of the program's screen.
+
+You use the left arrow, the right arrow, the up arrow and the down arrow keys
+to move the cursor one character left, one character right, one line up and
+one line down respectivley. CTRL+a moves the cursor to the beginning of the
+current line while CTRL+e moves the cursor to the end of the current line.
+PageDown and PageUp keys let you scroll the text one page down and one page up
+respectivley. To scroll to the very first page you use the HOME key.
+
+Unlike other editors, when Klein does horizontal scrolling it scrolls only
+those lines which need to be scrolled, while other lines remain intact.
+In Windows Notepad, eg., when you scroll a line horizontally, other lines
+are scrolled too.
+
+Unlike vim, Klein doesn't have special EDIT/INSERT modes to allow you to type
+the text. You just start the editor and type your text right away as you do
+in other editors, such as, for example, Nano. If you want to break the line 
+or add a new line you do it with the RETURN key as in other editors. To delete 
+the character to the left of the cursor you use the BACKSPACE key. To delete the
+character to the right of the cursor you use the DELETE key. To delete the 
+current line you use CTRL+k. To undo the deletion of the current line you use 
+CTRL+u. META+d removes the part of the current line from the current cursor 
+position to the end of the line. To delete all the lines below the current line 
+you use the META+k shortcut.
+
+To copy a text from a single line (which is the current line), the user, first 
+of all, has to select the text on the line. Selection of the text is done the 
+following way. The user marks the beginning of the text by placing the cursor 
+on it and clcking CTRL+l. Then he marks the end of the text by placing the cursor 
+on it and clcking  CTRL+l again. Then the selected text is copied to the clipboard 
+with CTRL+p. To select another text on the same line, the user, first, has to unselect the 
+previously selected text (if there is any). He does it by clicking 
+CTRL+p either on the beginning or the end of the selected text. Also if the user 
+deletes a character from the selected text, the text becomes unselected too.
+To yank the text copied by Ctrl+p, hit CTRL+y.
+
+You can also copy a block of N consecutive lines where N (i.e. the number of 
+lines to copy) starts from the current line. To do this you click META+p on the 
+current line. Then you will be prompted to enter the value of N. If, for 
+example, you enter 3 you will copy the current line and the next two lines. 
+If you enter 10 you will copy the current line and the next nine lines. If you 
+enter 1 you will only copy the current line. To yank the block copied by Meta+p 
+you use Meta+y.
+
+The program's search capabilities so far are very limited. You can locate
+a line by its number using CTRL+g. You will be prompted to enter the number.
+Or you can locate a line which contains a certain text using CTRL+f. You will
+be prompted to enter the text. The search starts from the current line, is done 
+only in the forward direction and stops at the very first line
+meeting the search criteria.
+--------------------------------------------------------------------------------
+
+7. TESTING SCRIPTS
+
+Klein allows the user to test his shell script right from within its environment.
+First of all you have to specify the script's working directory using the F8 key.
+Then you hit the F9 key to be prompted for script's name and run it after that. 
+To interact with the script and see its output you will be redirected to the
+full-screen console window. After the script ends, hit ENTER when prompted 
+to do so to leave the console window and go back to the editor. 
+
+--------------------------------------------------------------------------------
+
+8. CUSTOMISATION
+
+The editor's configuration file is $HOME/.kleinrc and you have to create it on
+your own. Currently the configuration file supports only two options: autoindent
+and tabstop. So the contents of your configuration file may look like this:
+
+autoindent=1
+tabstop=8
+
+The value 1 of the autoindent option means that the editor is to enable the 
+autoindentation of lines. The value 0 means that the autoindentation is to be
+disabled. For the tabstop option you can freely use any value of your choice: 2,
+4, 8 ... 
+

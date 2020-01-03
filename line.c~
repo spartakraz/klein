@@ -1,0 +1,87 @@
+#include "library.h"
+
+struct line_st *
+line_new (void)
+{
+  size_t memsiz = sizeof (struct line_st);
+  struct line_st *linep = (struct line_st *) mem_alloc (memsiz);
+  RETURN_VALUE_IF_TRUE (IS_NULL (linep), NULL);
+  memset (linep, 0x0, sizeof (struct line_st));
+  linep->no = -0x1;
+  linep->text = NULL;
+  linep->cursor_char_idx = 0x0;
+  linep->first_visible_char_idx = 0x0;
+  return linep;
+}
+
+void
+line_free (struct line_st *linep)
+{
+  RETURN_IF_TRUE (IS_NULL (linep));
+  if (!line_is_null (linep))
+    {
+      (void) mem_free (linep->text);
+    }
+  (void) mem_free (linep);
+}
+
+void
+line_text_alloc (struct line_st *linep, const INT32 nbytes)
+{
+  if (nbytes <= 0x0)
+    {
+      if (!line_is_null (linep))
+        {
+          (void) mem_free (linep->text);
+          linep->text = NULL;
+        }
+    }
+  else
+    {
+      if (line_is_null (linep))
+        {
+          str_alloc (&linep->text, nbytes);
+        }
+      else
+        {
+          str_realloc (&linep->text, nbytes);
+        }
+      line_edit_char (linep, nbytes, '\0');
+    }
+}
+
+BOOL32
+line_is_null (struct line_st *linep)
+{
+  BOOL32 retval = IS_NULL (linep->text) ? TRUE : FALSE;
+  return retval;
+}
+
+INT32
+line_len (struct line_st *linep)
+{
+  INT32 retval = (line_is_null (linep)) ? 0x0 : STR_LENGTH (linep->text);
+  return retval;
+}
+
+void
+line_prepend_char (struct line_st *linep, const CHAR8 ch)
+{
+  if (line_is_null (linep))
+    {
+      line_append_char (linep, ch);
+    }
+  else
+    {
+      line_insert_char (linep, 0x0, ch);
+    }
+}
+
+INT32
+line_strstr (struct line_st *linep, const CHAR8 *str)
+{
+  RETURN_VALUE_IF_TRUE (line_is_null (linep) || (IS_NULL (str)), 0x0);
+  INT32 retval = strstr (linep->text, str) ? 0x1 : 0x0;
+  return retval;
+}
+

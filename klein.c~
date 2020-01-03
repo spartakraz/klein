@@ -1,0 +1,3222 @@
+/* klein.c */
+#undef IS_LINUX
+#if defined(linux) || defined(__linux__) || defined(__linux)
+#define IS_LINUX 1
+#endif
+#if !(IS_LINUX)
+#error "[UNSUPPORTED_OS]"
+#endif
+#undef COMPILER_IS_GNUC
+#if defined(__GNUC__)
+#define COMPILER_IS_GNUC 1
+#endif
+#if !(COMPILER_IS_GNUC)
+#error "[UNSUPPORTED_COMPILER]"
+#else
+#undef _GNU_SOURCE
+#define _GNU_SOURCE
+#define NORETURN_ATTRIB __attribute__ ((noreturn))
+#define CONST_ATTRIB __attribute__((const))
+#define INLINE_ATTRIB inline
+#define ALWAYS_INLINE_ATTRIB __attribute__((always_inline))
+#endif
+
+#include <ctype.h>
+#include <curses.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <pwd.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+
+#if !defined(TRUE)
+#define TRUE (1)
+#endif
+#if !defined(FALSE)
+#define FALSE (0)
+#endif
+#if !defined(NULL)
+#define NULL ((void *)0)
+#endif
+#define SPACE_CHAR ' '
+#define TAB_CHAR '\t'
+#define CLRF_CHAR '\n'
+#define VERSION "GNU klein 1.4"
+#define LOG_FILE_NAME "/tmp/klein.log"
+#define CONFIG_FILE_NAME "/.kleinrc"
+#if (DEBUG_MODE_ENABLED)
+#define MAX_BUFFER_COUNT 2
+#else
+#define MAX_BUFFER_COUNT 10
+#endif
+#define FILE_PERMISSIONS (O_WRONLY | O_CREAT | O_TRUNC),	(S_IRWXU | S_IRGRP| S_IWGRP | S_IROTH)
+#define FRAME_WIDTH() ((INT32) COLS)
+#define FRAME_HEIGHT() ((INT32) LINES - 2)
+#define TOP_LEFT_X (0)
+#define TOP_LEFT_Y (0)
+#define MAX_BAR_TEXT_SIZE 1024
+#define MAX_USER_INPUT_SIZE 255
+#define TEXT_AREA_COLOR_PAIR 1
+#define INPUT_BAR_COLOR_PAIR 2
+#define STATUS_BAR_COLOR_PAIR 3
+#define TITLE_BAR_COLOR_PAIR 4
+#define HINT_BAR_COLOR_PAIR 5
+#define HELP_ITEMS_COUNT 44
+#define MAX_HELP_ITEM_SIZE 200
+#if defined(DEBUG_MODE_ENABLED)
+#if (COMPILER_IS_GNUC)
+#define logfmt(fmt_, ...) \
+   { \
+   FILE *fp = fopen(LOG_FILE_NAME, "a"); \
+   fprintf(fp,	\
+            "[%s: %s:%d] **DBG: " fmt_ "\n",	\
+            VERSION,	\
+            __FILE__, \
+            __LINE__, \
+            ##__VA_ARGS__); \
+            fflush(fp);	\
+            fclose(fp);	\
+   }
+#else
+#define logfmt(fmt_, ...) \
+   { \
+   FILE *fp = fopen(LOG_FILE_NAME, "a");	\
+   fprintf(fp,					\
+            "[%s: %s:%d] **DBG: " fmt_ "\n",	\
+            VERSION, \
+            __FILE__, \
+            __LINE__, \
+            __VA_ARGS__); \
+   fflush(fp);	\
+   fclose(fp);	\
+   }
+#endif
+#else
+#define logfmt(fmt_, ...)
+#endif
+#if (COMPILER_IS_GNUC)
+/* outputs a formatted message to stderr and then halts the program */
+#define diefmt(fmt_, ...)			\
+  {						\
+    fprintf(stderr,				\
+            "[%s: %s:%d] **ERR: " fmt_ "\n",	\
+            VERSION,				\
+            __FILE__,				\
+            __LINE__,				\
+            ##__VA_ARGS__);			\
+    fflush(stderr);				\
+    abort_klein();				\
+  }
+#else
+#define diefmt(fmt_, ...)			\
+  {						\
+    fprintf(stderr,				\
+            "[%s: %s:%d] **ERR: " fmt_ "\n",	\
+            VERSION,				\
+            __FILE__,				\
+            __LINE__,				\
+            __VA_ARGS__);			\
+    fflush(stderr);				\
+    abort_klein();				\
+  }
+#endif
+/* returns from the current function if given expression evaluates to TRUE */
+#define RETURN_IF_TRUE(expr_)			\
+  do {						\
+    if ((expr_))				\
+      {						\
+	return;					\
+      }						\
+  } while (0)
+/* returns specified value from the current function if given expression
+   evaluates to TRUE */
+#define RETURN_VAL_IF_TRUE(expr_, val_)		\
+  do {						\
+    if ((expr_))				\
+      {						\
+	return (val_);				\
+      }						\
+  } while (0)
+/* calls a function pointer if it refers to a valid function */
+#define CALL_FUNCPTR(funcptr_)			\
+  do {						\
+    if (!IS_NULL((funcptr_)))			\
+      {						\
+	funcptr_();				\
+      }						\
+  } while(0)
+/* converts the current value of errno to string */
+#define ERRNO_TO_STR()              perror(errno != 0 ? strerror(errno) : "[UnknownError]")
+/* checks whether an integer variable holds given value */
+#define IS_EQUAL(var_, val_)        ((INT32)(var_) == (INT32)(val_))
+/* checks whether an integer variable holds a negative value */
+#define IS_NEGATIVE(var_)           IS_EQUAL((var_), -1)
+/* checks whether a pointer refers to an invalid memory */
+#define IS_NULL(ptr_)               (((ptr_) == NULL))
+/* checks whether an integer variable used as boolean holds TRUE */
+#define IS_TRUE(val_)               IS_EQUAL((val_), TRUE)
+/* converts given unsigned 32-bit integer to signed 16-bit integer */
+#define INT_32_TO_16(n_)            ((INT32)((n_) & 0x7fffu) - (INT32)((n_) & 0x8000u))
+/* returns length of a string */
+#define STR_LENGTH(str_)            IS_NULL((str_)) ? 0 : strlen(str_)
+/* compares the content of two strings */
+#define STR_COMPARE(lhstr_, rhstr_) ((strcmp((lhstr_), (rhstr_)) == 0) ? TRUE : FALSE)
+/* returns the number of memory bytes required to store a string
+   of a given length */
+#define STR_NBYTES(len_)            (sizeof(CHAR8) * ((len_) + 1))
+
+/* inserts given number of spaces in the current position of the text area */
+#define insert_spaces(nspaces_)			\
+  do {						\
+    for (i = 0; i < nspaces_; i++)		\
+      {						\
+	edt_accept_key(SPACE_CHAR);		\
+      }						\
+  } while(0)
+/* appends a char to a line */
+#define line_append_char(lineptr_, c_)					\
+  do {									\
+    INT32 len = (line_is_null((lineptr_))) ? 1 : line_len((lineptr_)) + 1; \
+    line_text_alloc((lineptr_), len);					\
+    line_edit_char((lineptr_), len - 1, (c_));				\
+  } while(0)
+/* inserts a char to the given position in a line */
+#define line_insert_char(lineptr_, pos_, c_)	\
+  do {						\
+    INT32 len = line_len((lineptr_)) + 1;	\
+    line_text_alloc((lineptr_), len);		\
+    memmove((lineptr_)->text + (pos_) + 1,	\
+	    (lineptr_)->text + (pos_),		\
+	    len - (pos_));			\
+    line_edit_char((lineptr_), (pos_), (c_));	\
+  } while(0)
+/* drops a char at the given position in a line */
+#define line_drop_char(lineptr_, pos_)		\
+  do {						\
+    if (!line_is_null((lineptr_))) {		\
+      INT32 len = line_len((lineptr_));		\
+      memmove((lineptr_)->text + (pos_),	\
+	      (lineptr_)->text + (pos_) + 1,	\
+	      len - (pos_)-1);			\
+      len--;					\
+      line_text_alloc((lineptr_), len);		\
+    }						\
+  } while(0)
+/* writes a char to the specified position in a line */
+#define line_edit_char(lineptr_, pos_, c_)	\
+  do {						\
+    (*((lineptr_)->text + (pos_)) = (c_));	\
+  } while (0)
+/* appends a string to a line */
+#define line_append_str(linep, strp)		\
+  do {						\
+    while (*strp) {				\
+      line_append_char(linep, *strp);		\
+      strp++;					\
+    }						\
+  } while(0)
+/* this macro must be invoked each time after a new line is added to a buffer */
+#define buffer_after_line_added(bufptr_)	\
+  do {						\
+    (bufptr_)->line_count++;			\
+    buffer_renum_lines((bufptr_));		\
+  } while(0)
+/* removes all lines from a buffer starting with the given line */
+#define _buffer_remove_all_lines(linep_)	\
+  do {						\
+    struct line_st *tp;				\
+    while (!IS_NULL(linep_)) {			\
+      tp = linep_;				\
+      linep_ = linep_->next_node;		\
+      line_free(tp);				\
+    }						\
+  } while(0)
+/* this macro must be invoked each time after a buffer's line is edited */
+#define buffer_after_edit(bufptr_)		\
+  do {						\
+    (bufptr_)->is_dirty = TRUE;			\
+  } while(0)
+/* this macro must be invoked each time after the text area's cursor changes
+ * his position  */
+#define cursor_after_changed()			\
+  do {						\
+    redraw_status_bar();			\
+    draw_cursor();				\
+    conio_refresh_window(g_text_area);		\
+  } while(0)
+/* warns user about inability to switch to another buffer */
+#define warn_switch_buffer()			\
+  do {						\
+    if (g_user_files_count <= 1) {		\
+      flash();					\
+      return;					\
+    }						\
+  } while(0)
+/* warns user about his invalid numeric input */
+#define warn_numeric_input()				\
+  do {							\
+    if (!IS_TRUE(str_is_numeric(g_user_input))) {	\
+      dlg_msgbox(get_input_bar_y(),			\
+		 errtype_to_str(ERROR_NUMERIC_FORMAT));	\
+      return;						\
+    }							\
+  } while (0)
+/* removes a bar from the window */
+#define _dispose_bar(bar)			\
+  do {						\
+    if (!IS_NULL(bar)) {			\
+      conio_delete_window(bar);			\
+      bar = NULL;				\
+    }						\
+  } while (0)
+/* applies a color pair to the given bar */
+#define _color_bar(bar_, colorpair_)		\
+  do {						\
+    if (conio_has_colors()) {			\
+      wbkgd(bar_, colorpair_);			\
+    }						\
+  } while(0)
+#define dlg_redraw_prompt_bar(prompt_)		\
+  do {						\
+    conio_print_str(g_prompt_bar, (prompt_),	\
+		    0,				\
+		    0,				\
+		    STR_LENGTH((prompt_)));	\
+    conio_refresh_window(g_prompt_bar);		\
+  } while (0)
+#define dlg_redraw_input_bar()			\
+  do {						\
+    conio_print_str(g_input_bar,		\
+		    g_user_input,		\
+		    0,				\
+		    0,				\
+		    MAX_USER_INPUT_SIZE);	\
+    conio_refresh_window(g_input_bar);		\
+  } while(0)
+#define dlg_remove_prompt_bar()			\
+  do {						\
+    if (!IS_NULL(g_prompt_bar)) {		\
+      conio_delete_window(g_prompt_bar);	\
+      g_prompt_bar = NULL;			\
+    }						\
+  } while (0)
+#define dlg_remove_input_bar()			\
+  do {						\
+    if (!IS_NULL(g_input_bar)) {		\
+      conio_delete_window(g_input_bar);		\
+      g_input_bar = NULL;			\
+    }						\
+  } while (0)
+#define add_ctrl_key_handler(no_, command_, handler_)	\
+  do {							\
+    g_ctrl_key_handlers[no_].command = (command_);	\
+    g_ctrl_key_handlers[no_].handler = (handler_);	\
+  } while(0)
+#define add_meta_key_handler(no_, command_, handler_)	\
+  do {							\
+    g_meta_key_handlers[no_].command = (command_);	\
+    g_meta_key_handlers[no_].handler = (handler_);	\
+  } while(0)
+#define CTRL_KEY(key_)      (((key_) & 0xff) - 64)
+#define META_KEY(key_)      ((key_)  & 0xff)
+#define SINGLE_KEY(key_)    ((key_)  & 0xff)
+#define KLEIN_FKEY_1        KEY_F(1)
+#define KLEIN_FKEY_2        KEY_F(2)
+#define KLEIN_FKEY_3        KEY_F(3)
+#define KLEIN_FKEY_4        KEY_F(4)
+#define KLEIN_FKEY_5        KEY_F(5)
+#define KLEIN_FKEY_6        KEY_F(6)
+#define KLEIN_FKEY_7        KEY_F(7)
+#define KLEIN_FKEY_8        KEY_F(8)
+#define KLEIN_FKEY_9        KEY_F(9)
+#define KLEIN_FKEY_10       KEY_F(10)
+#define KLEIN_CTRL_A        CTRL_KEY('A')
+#define KLEIN_CTRL_E        CTRL_KEY('E')
+#define KLEIN_CTRL_F        CTRL_KEY('F')
+#define KLEIN_CTRL_G        CTRL_KEY('G')
+#define KLEIN_CTRL_K        CTRL_KEY('K')
+#define KLEIN_CTRL_P        CTRL_KEY('P')
+#define KLEIN_CTRL_U        CTRL_KEY('U')
+#define KLEIN_CTRL_Y        CTRL_KEY('Y')
+#define KLEIN_META_D        META_KEY('d')
+#define KLEIN_META_K        META_KEY('k')
+#define KLEIN_META_P        META_KEY('p')
+#define KLEIN_META_R        META_KEY('r')
+#define KLEIN_META_Y        META_KEY('y')
+#define KLEIN_META_COMMA    META_KEY(',')
+#define KLEIN_META_DOT      META_KEY('.')
+#define KLEIN_KEY_BACKSPACE KEY_BACKSPACE
+#define KLEIN_KEY_CR        SINGLE_KEY('\r')
+#define KLEIN_KEY_DELETE    KEY_DC
+#define KLEIN_KEY_DOWN      KEY_DOWN
+#define KLEIN_KEY_ESC       SINGLE_KEY(27)
+#define KLEIN_KEY_HOME      KEY_HOME
+#define KLEIN_KEY_LEFT      KEY_LEFT
+#define KLEIN_KEY_PGDOWN    SINGLE_KEY(338)
+#define KLEIN_KEY_PGUP      SINGLE_KEY(339)
+#define KLEIN_KEY_RIGHT     KEY_RIGHT
+#define KLEIN_KEY_TAB       SINGLE_KEY('\t')
+#define KLEIN_KEY_UP        KEY_UP
+
+/*
+ * Typedefs.
+ */
+  typedef int   INT32;
+typedef INT32 char_idx_t;
+typedef INT32 BOOL32;
+typedef char  CHAR8;
+typedef void  command_handler_func(void);
+typedef void  (*screen_draw_func)(void);
+
+/*
+ * keystrokes thru which the program's commands are invoked
+ */
+enum keystrokes_enum {
+		      /* exit the program */
+		      KS_EXIT =                       KLEIN_FKEY_10,
+		      /* view Help window */
+		      KS_SHOW_HELP =                  KLEIN_FKEY_1,
+		      /* opens a file in a new buffer */
+		      KS_OPEN_FILE =                  KLEIN_FKEY_2,
+		      /* saves the file from the current buffer */
+		      KS_SAVE_CURRENT_FILE =          KLEIN_FKEY_3,
+		      /* saves all buffers */
+		      KS_SAVE_ALL_FILES =             KLEIN_FKEY_4,
+		      /* run user's shell script from within the program */
+		      KS_RUN_SCRIPT =                 KLEIN_FKEY_5,
+		      /* sets the working directory for the CMD_RUN_SCRIPT command */
+		      KS_SET_SCRIPT_DIR =             KLEIN_FKEY_6,
+		      /* show info about the current buffer */
+		      KS_SHOW_CURRENT_BUFFER_INFO =   KLEIN_FKEY_7,
+		      /* show the list of opened buffers */
+		      KS_LIST_OPENED_BUFFERS =        KLEIN_FKEY_8,
+		      /* drop the current buffer */
+		      KS_DROP_CURRENT_BUFFER =        KLEIN_FKEY_9,
+		      /* move up one line */
+		      KS_MOVE_LINE_UP =               KLEIN_KEY_UP,
+		      /* move down one line */
+		      KS_MOVE_LINE_DOWN =             KLEIN_KEY_DOWN,
+		      /* move one character forward */
+		      KS_MOVE_CHAR_FRWD =             KLEIN_KEY_RIGHT,
+		      /* move one character backward */
+		      KS_MOVE_CHAR_BKWD =             KLEIN_KEY_LEFT,
+		      /* move to the beginning of the current line */
+		      KS_JUMP_TO_BOL =                KLEIN_CTRL_A,
+		      /* move to the end of the current line */
+		      KS_JUMP_TO_EOL =                KLEIN_CTRL_E,
+		      /* move up one page */
+		      KS_SCROLL_PAGE_UP =             KLEIN_KEY_PGUP,
+		      /* move down one page */
+		      KS_SCROLL_PAGE_DOWN =           KLEIN_KEY_PGDOWN,
+		      /* move to the very first page */
+		      KS_SCROLL_TO_FIRST_PAGE =       KLEIN_KEY_HOME,
+		      /* insert a tab at the cursor position */
+		      KS_INSERT_TAB =                 KLEIN_KEY_TAB,
+		      /* insert a carriage return (CR) character at the cursor's position */
+		      KS_INSERT_CR =                  KLEIN_KEY_CR,
+		      /* delete the character under the cursor */
+		      KS_DROP_NEXT_CHAR =             KLEIN_KEY_DELETE,
+		      /* delete the character to the left of the cursor */
+		      KS_DROP_PREV_CHAR =             KLEIN_KEY_BACKSPACE,
+		      /* in the current line delete all characters standing to the right of
+			 the cursor */
+		      KS_DROP_NEXT_CHARS =            KLEIN_META_D,
+		      /* drop the current line */
+		      KS_DROP_CURRENT_LINE =          KLEIN_CTRL_K,
+		      /* restore the line dropped by the CMD_DROP_CURRENT_LINE command */
+		      KS_UNDROP_CURRENT_LINE =        KLEIN_CTRL_U,
+		      /* drop all the lines standing below the current line */
+		      KS_DROP_BELOW_LINES =           KLEIN_META_K,
+		      /* in the current line copy all characters standing to the right of
+			 the cursor to the text clipboard */
+		      KS_COPY_NEXT_CHARS =            KLEIN_CTRL_P,
+		      /* paste the characters copied by the COMMAND_COPY_NEXT_CHARS command
+			 to the cursor position */
+		      KS_YANK_NEXT_CHARS =            KLEIN_CTRL_Y,
+		      /* copy N lines standing below the current line to the line clipboard */
+		      KS_COPY_BELOW_LINES =           KLEIN_META_P,
+		      /* paste the lines copied by the CMD_COPY_BELOW_LINES command */
+		      KS_YANK_BELOW_LINES =           KLEIN_META_Y,
+
+		      /* locate line containing specified string */
+		      KS_LOCATE_BY_STR =              KLEIN_CTRL_F,
+		      /* locate N-th line */
+		      KS_LOCATE_BY_NO =               KLEIN_CTRL_G,
+		      /* cancel the input bar */
+		      KS_CANCEL_INPUT =               KLEIN_KEY_ESC,
+		      /* switch to the next buffer */
+		      KS_TO_PREV_BUFFER =             KLEIN_META_COMMA,
+		      /* switch to the previous buffer */
+		      KS_TO_NEXT_BUFFER =             KLEIN_META_DOT,
+		      /* refresh the current page */
+		      KS_REFRESH_SCREEN =             KLEIN_META_R
+
+};
+
+enum enum_errors {
+		  ERROR_MALLOC =          (1 << 0),
+		  ERROR_REALLOC =         (1 << 1),
+		  ERROR_ARGS =            (1 << 2),
+		  ERROR_BUFFER =          (1 << 3),
+		  ERROR_SAVE =            (1 << 4),
+		  ERROR_NUMERIC_FORMAT =  (1 << 5),
+		  ERROR_RUN_SCRIPT =      (1 << 6),
+		  ERROR_LOCATE_LINE =     (1 << 7),
+		  ERROR_CONFIG_FILE =     (1 << 8)
+};
+
+struct line_st {
+  INT32           no;
+  struct line_st  *prev_node;
+  struct line_st  *next_node;
+  CHAR8           *text;
+  char_idx_t      first_visible_char;
+  char_idx_t      cursor_char;
+};
+
+struct buffer_st {
+  CHAR8           *file_name;
+  INT32           line_count;
+  struct line_st *first_line;
+  struct line_st *current_line;
+  struct line_st *top_line;
+  struct line_st *bottom_line;
+  INT32           is_dirty;
+};
+
+struct error_info_st {
+  enum enum_errors    symbol;
+  CHAR8               *description;
+};
+
+struct command_handler_st {
+  enum keystrokes_enum command;
+  command_handler_func *handler;
+};
+
+struct script_info_st {
+  CHAR8 *base_name;
+  CHAR8 *work_dir;
+};
+
+/*
+ * Prototypes.
+ */
+static INLINE_ATTRIB INT32
+math_qmultiply(INT32, INT32) ALWAYS_INLINE_ATTRIB CONST_ATTRIB;
+static INLINE_ATTRIB INT32
+math_qdivide(INT32, INT32) ALWAYS_INLINE_ATTRIB CONST_ATTRIB;
+static void *
+mem_alloc(const size_t);
+static void *
+mem_realloc(void *, const size_t);
+static INT32
+mem_free(void *);
+static INT32
+str_alloc(CHAR8 **, const size_t);
+static INT32
+str_realloc(CHAR8 **, const size_t);
+static INT32
+str_is_numeric(const CHAR8 *);
+static INT32
+file_exists(const CHAR8 *name);
+static INT32
+file_read_byte(INT32, CHAR8 *);
+static INT32
+file_write_byte(INT32, CHAR8 *);
+static INT32
+file_write_str(const INT32, const CHAR8 *, const INT32);
+static INLINE_ATTRIB size_t
+file_get_size(const CHAR8 *name);
+static const CHAR8 *
+file_get_mtime(const CHAR8 *);
+static const CHAR8 *
+file_owner(const CHAR8 *);
+static INT32
+file_is_dir(const CHAR8 *);
+static INT32
+shell_run_cmd(const CHAR8 *, const CHAR8 *);
+static void
+conio_start(void);
+static INLINE_ATTRIB INT32
+conio_has_colors(void) CONST_ATTRIB;
+static WINDOW *
+conio_create_window(const INT32, const INT32, const INT32, const INT32);
+static WINDOW *
+conio_create_subwindow(WINDOW *, const INT32, const INT32, const INT32, const INT32);
+static WINDOW *
+conio_get_stdscr(void);
+static void
+conio_delete_window(WINDOW *);
+static void
+conio_empty_window(WINDOW *, const INT32, const INT32, const INT32, const INT32);
+static void
+conio_refresh_window(WINDOW * wp);
+static INLINE_ATTRIB INT32
+conio_get_key_length(const INT32 key);
+static void
+conio_print_str(WINDOW *, const CHAR8 *, const INT32, const INT32, const INT32);
+static struct line_st *
+line_new(void);
+static void
+line_free(struct line_st *);
+static void
+line_text_alloc(struct line_st *, const INT32);
+static INT32
+line_is_null(struct line_st *p);
+static INT32
+line_len(struct line_st *p);
+static void
+line_prepend_char(struct line_st *p, const CHAR8 c);
+static INT32
+line_strstr(struct line_st *p, const CHAR8 *s);
+static struct buffer_st
+buffer_new(void);
+static void
+buffer_reset(struct buffer_st *);
+static void
+buffer_renum_lines(struct buffer_st *);
+static struct line_st *
+buffer_get_line(struct buffer_st *, const INT32);
+static void
+buffer_prepend_line(struct buffer_st *, struct line_st *);
+static void
+buffer_append_line(struct buffer_st *, struct line_st *);
+static void
+buffer_insert_line(struct buffer_st *, const INT32, struct line_st *);
+static void
+buffer_drop_line(struct buffer_st *, const INT32);
+static void
+buffer_clear(struct buffer_st *);
+static INT32
+buffer_load_file(struct buffer_st *);
+static INT32
+buffer_save_file(struct buffer_st *);
+static INLINE_ATTRIB void
+_buffer_process_loaded_tab(struct line_st *);
+static INLINE_ATTRIB void
+_buffer_process_loaded_newline_char(struct buffer_st *, struct line_st **);
+static INLINE_ATTRIB INT32
+edt_char_idx_to_x(const char_idx_t) ALWAYS_INLINE_ATTRIB;
+static INT32
+edt_is_BOL(void);
+static INT32
+edt_is_EOL(void);
+static INT32
+edt_is_lhedge(void);
+static INT32
+edt_is_rhedge(void);
+static void
+edt_to_lhedge(void);
+static void
+edt_to_rhedge(void);
+static void
+edt_scroll_bkwd(void);
+static void
+edt_scroll_frwd(void);
+static void
+edt_accept_key(INT32);
+static void
+edt_up_key(void);
+static void
+edt_down_key(screen_draw_func);
+static void
+edt_frwd_key(void);
+static void
+edt_bkwd_key(void);
+static void
+edt_to_BOL_key(void);
+static void
+edt_to_EOL_key(void);
+static void
+edt_pgdown_key(screen_draw_func);
+static void
+edt_pgup_key(const INT32);
+static void
+edt_home_key(screen_draw_func);
+static void
+edt_tab_key(void);
+static void
+edt_return_key(void);
+static void
+edt_backspace_key(void);
+static void
+edt_drop_char_key(void);
+static void
+edt_drop_chars_key(void);
+static void
+edt_drop_line_key(screen_draw_func);
+static void
+edt_drop_lines_key(void);
+static void
+edt_copy_chars_key(void);
+static void
+edt_yank_chars_key(void);
+static void
+edt_yank_lines_key(struct buffer_st *);
+static void
+edt_find_bytext_key(const INT32);
+static void
+edt_find_byno_key(const INT32);
+static void
+edt_read_config(void);
+static INLINE_ATTRIB INT32
+_edt_need_frwd_hscroll(void);
+static INLINE_ATTRIB INT32
+_edt_need_bkwd_hscroll(void);
+static void
+_edt_prepend_spaces(struct line_st *, INT32 *);
+static void
+_edt_indent_line(screen_draw_func);
+static void
+_edt_break_line(void);
+static void
+_edt_merge_lines(screen_draw_func);
+static INT32
+_edt_is_in_page(const INT32);
+static INLINE_ATTRIB void
+_edt_save_page(void);
+static INLINE_ATTRIB void
+_edt_restore_page(void);
+static INLINE_ATTRIB void
+undo_init(void);
+static void
+undo_set_line(struct line_st *);
+static INT32
+undo_restore_line(struct buffer_st *);
+static CHAR8 *
+config_get_path(void);
+static INT32
+config_load(void);
+static INT32
+config_read_option(const CHAR8 *, INT32 *);
+static INT32
+dlg_input_dlg(const INT32, const CHAR8 *, const CHAR8 *);
+static INT32
+dlg_yesno_dlg(const INT32, const CHAR8 *, const CHAR8 *);
+static void
+dlg_msgbox(const INT32, const CHAR8 *);
+static INLINE_ATTRIB void
+dlg_remove(void);
+static const CHAR8 *
+errtype_to_str(const enum enum_errors);
+static void
+abort_klein(void) NORETURN_ATTRIB;
+static void
+atexit_callback(void);
+static void
+register_buffer(const CHAR8 *);
+static void
+activate_buffer(const INT32);
+static void
+init_globals(void);
+static void
+init_window(void);
+static void
+uninit_window(void);
+static INLINE_ATTRIB void
+check_termsize(void);
+static INLINE_ATTRIB INT32
+lineno_to_y(const INT32);
+static INLINE_ATTRIB INT32
+get_text_area_y(void);
+static INLINE_ATTRIB INT32
+get_title_bar_y(void);
+static INLINE_ATTRIB INT32
+get_input_bar_y(void);
+static INLINE_ATTRIB INT32
+get_status_bar_y(void);
+static INLINE_ATTRIB INT32
+get_hint_bar_y(void);
+static INLINE_ATTRIB void
+create_text_area(void);
+static void
+create_title_bar(void);
+static void
+create_status_bar(void);
+static void
+create_hint_bar(void);
+static INLINE_ATTRIB void
+draw_line(struct line_st *);
+static INLINE_ATTRIB void
+draw_cursor(void);
+static void
+redraw_text_area(void);
+static void
+redraw_title_bar(void);
+static void
+redraw_status_bar(void);
+static void
+redraw_help_bar(void);
+static void
+redraw_screen(void);
+static INLINE_ATTRIB void
+flash_screen(void);
+static void
+switch_to_console_mode(void);
+static void
+switch_to_edit_mode(void);
+static command_handler_func *
+get_ctrl_key_handler(const INT32);
+static command_handler_func *
+get_meta_key_handler(const INT32);
+static void
+on_sigwinch();
+static void
+on_sigint(INT32);
+static void
+on_show_help(void);
+static void
+on_open_file(void);
+static void
+on_save_current_file(void);
+static void
+on_save_all_files(void);
+static void
+on_run_script(void);
+static void
+on_set_script_dir(void);
+static void
+handle_show_current_buffer_info(void);
+static void
+on_list_opened_buffers(void);
+static void
+on_drop_current_buffer(void);
+static void
+on_move_line_up(void);
+static void
+on_move_line_down(void);
+static void
+on_move_char_frwd(void);
+static void
+on_move_char_bkwd(void);
+static void
+on_jump_to_bol(void);
+static void
+on_jump_to_eol(void);
+static void
+on_scroll_page_down(void);
+static void
+on_scroll_page_up(void);
+static void
+on_scroll_to_first_page(void);
+static void
+on_insert_tab(void);
+static void
+on_insert_cr(void);
+static void
+on_drop_prev_char(void);
+static void
+on_drop_next_char(void);
+static void
+on_drop_next_chars(void);
+static void
+on_drop_current_line(void);
+static void
+on_drop_below_lines(void);
+static void
+on_undrop_current_line(void);
+static void
+on_copy_next_chars(void);
+static void
+on_copy_below_lines(void);
+static void
+on_yank_next_chars(void);
+static void
+on_yank_below_lines(void);
+static void
+on_locate_by_str(void);
+static void
+on_locate_by_no(void);
+static void
+on_to_prev_buffer(void);
+static void
+on_to_next_buffer(void);
+static void
+on_refresh_screen(void);
+static void
+event_loop(void);
+
+static struct error_info_st g_error_list[] = {
+					      { ERROR_MALLOC,         "ERROR_MALLOC **:    malloc() failed"           },
+					      { ERROR_ARGS,           "ERROR_ARGS **:      invalid argument"          },
+					      { ERROR_BUFFER,         "ERROR_BUFFER **:    buffer error"              },
+					      { ERROR_SAVE,           "SAVE_ERROR **:      file save error"           },
+					      { ERROR_NUMERIC_FORMAT, "NUMERIC_ERROR **:   numeric value error"       },
+					      { ERROR_RUN_SCRIPT,     "SCRIPTDIR_ERROR **: invalid script's workdir"  },
+					      { ERROR_LOCATE_LINE,    "FIND_ERROR**:       failed to find line"       },
+					      { ERROR_CONFIG_FILE,    "CONFIG_ERROR **:    Config file error!"        },
+					      { 0,                    NULL                                            }
+};
+static struct buffer_st     g_config_file;
+static INT32                g_auto_indent;
+static INT32                g_tab_stop;
+static INT32                g_top_line_no;
+static INT32                g_current_line_no;
+static struct buffer_st     g_user_files[MAX_BUFFER_COUNT];
+static INT32                g_user_files_count = 0;
+static INT32                g_current_user_file_idx = -1;
+static struct buffer_st     *g_current_user_file_ptr = NULL;
+
+static CHAR8                *g_text_copied = NULL;
+static struct buffer_st     g_lines_copied;
+static struct buffer_st     *g_lines_copied_ptr = NULL;
+static struct               line_st g_killed_line;
+static WINDOW               *g_text_area = NULL;
+static WINDOW               *g_title_bar = NULL;
+static WINDOW               *g_status_bar = NULL;
+static WINDOW               *g_prompt_bar = NULL;
+static WINDOW               *g_input_bar = NULL;
+static WINDOW               *g_hint_bar = NULL;
+static CHAR8                g_user_input[MAX_USER_INPUT_SIZE];
+static CHAR8                *g_search_str = NULL;
+static struct               script_info_st g_script_info;
+static struct               command_handler_st g_ctrl_key_handlers[29];
+static struct               command_handler_st g_meta_key_handlers[8];
+static CHAR8                g_manual_items[HELP_ITEMS_COUNT][MAX_HELP_ITEM_SIZE] = {
+										    "Klein Manual",
+										    "F1               Help.",
+										    "F2               Open a file in a new buffer.",
+										    "F3               Save a file from current buffer.",
+										    "F4               Save files from all buffers.",
+										    "F5               Run custom build script.",
+										    "F6               Sets working directory for the custom build script.",
+										    "F7               Current buffer info.",
+										    "F8               List of all opened buffers.",
+										    "F9               Kill current buffer.",
+										    "F10              Quit.",
+										    "*******************************************",
+										    "Up arrow         Move one line up",
+										    "Down arrow       Move one line down",
+										    "Right arrow      Move one character forward",
+										    "Left arrow       Move one character backward",
+										    "CTRL-a           Move to the beginning of line",
+										    "CTRL-e           Move to the end of line",
+										    "PG DWN           Scroll one page down",
+										    "PG UP            Scroll one page up",
+										    "HOME             Scroll to the very first page",
+										    "*******************************************",
+										    "RETURN           Standard behavior of the RETURN key",
+										    "TAB              Standard behavior of the TAB key",
+										    "BACKSPACE        Standard behavior of the BKSPC key",
+										    "DELETE           Delete the CHAR8 to the right of the cursor ",
+										    "CTRL-k           Delete the current line.",
+										    "CTRL-u           Undo deletion of the current line",
+										    "META^k           Delete all the lines below the current line",
+										    "*******************************************",
+										    "ESC              Cancel a dialog",
+										    "*******************************************",
+										    "CTRL-p           Copies to clipboard the part of the line from current cursor position to the end of the line",
+										    "CTRL-y           Pastes from clipboard the text copied there by CTRL-p",
+										    "META-d           Removes the part of the line from current cursor position to the end of the line",
+										    "META-p           Copies to clipboard N lines starting from the current one. The value of N is specified in the dialog",
+										    "META-y           Pastes from clipboard N lines copied there by META-p",
+										    "*******************************************",
+										    "CTRL-g           Go to line by its number",
+										    "CTRL-f           Go to line by its text.",
+										    "META-<           Switch to previous buffer.",
+										    "META->           Switch to next buffer.",
+										    "META-r           Refresh.",
+										    "*******************************************"
+};
+
+int
+main(int argc, char **argv)
+{
+  (void) atexit(atexit_callback);
+  if (argc != 2) {
+    file_write_str(STDERR_FILENO, errtype_to_str(ERROR_ARGS), TRUE);
+    perror("Bad args!");
+    exit(EXIT_FAILURE);
+  }
+  register CHAR8 opt;
+  while ((opt = getopt(argc, argv, "vh")) != -1) {
+    if ('v' == opt) {
+      file_write_str(STDOUT_FILENO, VERSION, TRUE);
+      exit(EXIT_SUCCESS);
+    } else if ('h' == opt) {
+      (void) shell_run_cmd(NULL, "clear");
+      on_show_help();
+      exit(EXIT_SUCCESS);
+    } else {
+      file_write_str(STDERR_FILENO, errtype_to_str(ERROR_ARGS), TRUE);
+      perror("Bad args!");
+      exit(EXIT_FAILURE);
+    }
+  }
+  init_globals();
+  if (!config_load()) {
+#if defined(DEBUG_MODE_ENABLED)
+    perror("Bad config!");
+#endif
+    g_auto_indent = 0;
+    g_tab_stop = 8;
+  } else {
+    edt_read_config();
+  }
+  undo_init();
+  signal(SIGINT, on_sigint);
+  g_lines_copied = buffer_new();
+  g_lines_copied_ptr = &g_lines_copied;
+  buffer_reset(g_lines_copied_ptr);
+  g_lines_copied_ptr->file_name = NULL;
+  init_window();
+  check_termsize();
+  register_buffer(argv[1]);
+  event_loop();
+  uninit_window();
+  struct buffer_st *bfp = NULL;
+  for (INT32 i = 0; i < g_user_files_count; i++) {
+    bfp = &g_user_files[i];
+    if (bfp->line_count) {
+      buffer_clear(bfp);
+    }
+  }
+  (void) shell_run_cmd(NULL, "clear");
+#if defined(EXIT_SUCCESS)
+  return EXIT_SUCCESS;
+#else
+  return 0;
+#endif
+}
+
+static INLINE_ATTRIB INT32
+math_qmultiply(INT32 num1, INT32 num2)
+{
+  INT32 retval = 0,
+    count = 0;
+  while (num2) {
+    if ((num2 & 1) == 1) {
+      retval += num1 << count;
+    }
+    count++;
+    num2 = num2 >> 1;
+  }
+  return retval;
+}
+
+static INT32
+math_qdivide(INT32 num1, INT32 num2)
+{
+  if (!num1) {
+    return 0;
+  }
+  if (!num2) {
+    return INT_MAX;
+  }
+  INT32 neg_result = FALSE;
+  if (num1 < 0) {
+    num1 = -num1;
+    if (num2 < 0) {
+      num2 = -num2;
+    } else {
+      neg_result = TRUE;
+    }
+  } else if (num2 < 0) {
+    num2 = -num2;
+    neg_result = TRUE;
+  }
+  INT32 quotient = 0;
+  while (num1 >= num2) {
+    num1 -= num2;
+    quotient++;
+  }
+  if (neg_result) {
+    quotient = -quotient;
+  }
+  return quotient;
+}
+
+static void *
+mem_alloc(const size_t nbytes)
+{
+  RETURN_VAL_IF_TRUE(!nbytes, (void *) NULL);
+  void *memp = malloc(nbytes);
+  return IS_NULL(memp) ? NULL : memp;
+}
+
+static void *
+mem_realloc(void *srcmemp, const size_t nbytes)
+{
+  RETURN_VAL_IF_TRUE(!nbytes, (void *) NULL);
+  void *destmemp = IS_NULL(srcmemp) ? mem_alloc(nbytes) : realloc(srcmemp, nbytes);
+  return destmemp;
+}
+
+static INT32
+mem_free(void *memp)
+{
+  RETURN_VAL_IF_TRUE(IS_NULL(memp), FALSE);
+  free(memp);
+  return TRUE;
+}
+
+static INT32
+str_alloc(CHAR8 **strpp, const size_t nbytes)
+{
+  size_t memsize = STR_NBYTES(nbytes);
+  *strpp = (CHAR8 *) mem_alloc(memsize);
+  RETURN_VAL_IF_TRUE(IS_NULL(*strpp), FALSE);
+  memset(*strpp, 0, memsize);
+  *(*strpp + nbytes) = 0;
+  return TRUE;
+}
+
+static INT32
+str_realloc(CHAR8 **strpp, const size_t nbytes)
+{
+  size_t memsize = STR_NBYTES(nbytes);
+  *strpp = (CHAR8 *) mem_realloc(*strpp, memsize);
+  RETURN_VAL_IF_TRUE((IS_NULL(*strpp) || *strpp == NULL), FALSE);
+  *(*strpp + nbytes) = 0;
+  return TRUE;
+}
+
+static INT32
+str_is_numeric(const CHAR8 *str)
+{
+  RETURN_VAL_IF_TRUE(IS_NULL(str), FALSE);
+  INT32 retval = TRUE;
+  register const CHAR8 *strp = str;
+  CHAR8 ch;
+  while (TRUE) {
+    ch = *strp;
+    if (!ch) {
+      break;
+    }
+    if (!isdigit(ch)) {
+      retval = FALSE;
+      break;
+    }
+    strp++;
+  }
+  strp = NULL;
+  return retval;
+}
+
+static INT32
+file_exists(const CHAR8 *filename)
+{
+  INT32 retval = (!access(filename, F_OK)) ? TRUE : FALSE;
+  return retval;
+}
+
+static INT32
+file_read_byte(INT32 fd, CHAR8 *ch)
+{
+  return read(fd, ch, 1);
+}
+
+static INT32
+file_write_byte(INT32 fd, CHAR8 *ch)
+{
+  return write(fd, ch, 1);
+}
+
+static INT32
+file_write_str(const INT32 fd, const CHAR8 *str, const INT32 newline)
+{
+  INT32 retcode = write(fd, str, STR_LENGTH(str));
+  if (IS_TRUE(newline)) {
+    CHAR8 ch = CLRF_CHAR;
+    retcode = file_write_byte(fd, &ch);
+    if (IS_NEGATIVE(retcode)) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+static INLINE_ATTRIB size_t
+file_get_size(const CHAR8 *filename)
+{
+  struct stat st;
+  stat(filename, &st);
+  return (size_t) st.st_size;
+}
+
+static const CHAR8 *
+file_get_mtime(const CHAR8 *filename)
+{
+  struct stat filest;
+  CHAR8 *buffer = NULL;
+  const INT32 buffer_size = 80;
+  str_alloc(&buffer, buffer_size);
+  memset(buffer, 0, buffer_size);
+  if (IS_NEGATIVE(stat(filename, &filest))) {
+    memset(buffer, 0, buffer_size);
+    strcpy(buffer, "0000-00-00");
+  } else {
+    sprintf(buffer, "%s", ctime(&filest.st_mtime));
+  }
+  return buffer;
+}
+
+static const CHAR8 *
+file_owner(const CHAR8 *filename)
+{
+  RETURN_VAL_IF_TRUE(IS_NULL(filename), NULL);
+  struct stat st;
+  stat(filename, &st);
+  uid_t uid = st.st_uid;
+  struct passwd *pwd = getpwuid(uid);
+  return (const CHAR8 *) pwd->pw_name;
+}
+
+static INT32
+file_is_dir(const CHAR8 *filename)
+{
+  struct stat st;
+  stat(filename, &st);
+  mode_t md = st.st_mode;
+  INT32 retcode = (INT32) S_ISDIR(md);
+  INT32 retval = retcode ? TRUE : FALSE;
+  return retval;
+}
+
+static INT32
+shell_run_cmd(const CHAR8 *workdir, const CHAR8 *cmd)
+{
+  RETURN_VAL_IF_TRUE(IS_NULL(cmd), FALSE);
+  const size_t memsize = 1024;
+  CHAR8 *buf = NULL;
+  str_alloc(&buf, memsize);
+  buf = getcwd(buf, memsize);
+  if (IS_NULL(buf)) {
+    return FALSE;
+  }
+  if (IS_NEGATIVE(system("clear"))) {
+    mem_free(buf);
+    return FALSE;
+  }
+  if (!IS_NULL(workdir)) {
+    if (IS_NEGATIVE(chdir(workdir))) {
+      mem_free(buf);
+      return FALSE;
+    }
+  }
+  if (IS_NEGATIVE(system(cmd))) {
+    return FALSE;
+  }
+  if (!IS_NULL(workdir)) {
+    if (IS_NEGATIVE(chdir(buf))) {
+      mem_free(buf);
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+static void
+conio_start(void)
+{
+  initscr();
+  (void) cbreak();
+  (void) nonl();
+  (void) noecho();
+  if (conio_has_colors()) {
+    (void) start_color();
+    (void) init_pair(TEXT_AREA_COLOR_PAIR,  COLOR_YELLOW,   COLOR_BLUE);
+    (void) init_pair(INPUT_BAR_COLOR_PAIR,  COLOR_WHITE,    COLOR_BLUE);
+    (void) init_pair(STATUS_BAR_COLOR_PAIR, COLOR_BLACK,    COLOR_WHITE);
+    (void) init_pair(TITLE_BAR_COLOR_PAIR,  COLOR_BLACK,    COLOR_WHITE);
+    (void) init_pair(HINT_BAR_COLOR_PAIR,   COLOR_MAGENTA,  COLOR_WHITE);
+  }
+}
+
+static INLINE_ATTRIB INT32
+conio_has_colors(void)
+{
+  return (INT32) has_colors();
+}
+
+static WINDOW *
+conio_create_window(const INT32 nlines, const INT32 ncols, const INT32 starty,
+		    const INT32 startx)
+{
+  WINDOW * winp = newwin(nlines, ncols, starty, startx);
+  (void) keypad(winp, TRUE);
+  (void) idlok(winp, TRUE);
+  (void) intrflush(winp, TRUE);
+  return winp;
+}
+
+static WINDOW *
+conio_create_subwindow(WINDOW *winp, const INT32 nlines, const INT32 ncols,
+		       const INT32 starty, const INT32 startx)
+{
+  WINDOW * subwinp = subwin(winp, nlines, ncols, starty, startx);
+  (void) keypad(subwinp, TRUE);
+  (void) idlok(subwinp, TRUE);
+  (void) intrflush(subwinp, TRUE);
+  return subwinp;
+}
+
+static WINDOW *
+conio_get_stdscr(void)
+{
+  (void) keypad(stdscr, TRUE);
+  (void) idlok(stdscr, TRUE);
+  (void) intrflush(stdscr, TRUE);
+  if (conio_has_colors()) {
+
+    wbkgd(stdscr, COLOR_PAIR(TEXT_AREA_COLOR_PAIR));
+    wattron(stdscr, A_BOLD);
+  }
+  return stdscr;
+}
+
+static void
+conio_delete_window(WINDOW *winp)
+{
+  (void) wmove(winp, 0, 0);
+  wclrtoeol(winp);
+  conio_refresh_window(winp);
+  (void) delwin(winp);
+}
+
+static void
+conio_empty_window(WINDOW *winp, const INT32 starty, const INT32 endy,
+		   const INT32 startx, const INT32 endx)
+{
+  INT32 len = endx - startx + 1;
+  size_t memsiz = sizeof (CHAR8) * len;
+  CHAR8 *str = (CHAR8 *) malloc(memsiz);
+  str = memset(str, SPACE_CHAR, len);
+  INT32 i;
+  for (i = starty; i <= endy; i++) {
+    (void) wmove(winp, i, startx);
+    (void) waddstr(winp, str);
+  }
+}
+
+static void
+conio_refresh_window(WINDOW *winp)
+{
+  (void) wnoutrefresh(winp);
+  (void) doupdate();
+}
+
+static INLINE_ATTRIB INT32
+conio_get_key_length(const INT32 key)
+{
+  const CHAR8 *name = (const CHAR8 *) keyname(key);
+  return strlen(name);
+}
+
+static void
+conio_print_str(WINDOW *winp, const CHAR8 *str, const INT32 y,
+		const INT32 start, const INT32 end)
+{
+  INT32 is_text_area = (winp == g_text_area);
+  (void) wmove(winp, y, is_text_area ? TOP_LEFT_X : 0);
+  wclrtoeol(winp);
+  RETURN_IF_TRUE(!str);
+  INT32 x = is_text_area ? TOP_LEFT_X : 0;
+  INT32 pos = start;
+  register const CHAR8 *strptr = str + start;
+  CHAR8 ch;
+  while (TRUE) {
+    if (pos > end) {
+      break;
+    }
+    ch = *strptr;
+    if (!ch) {
+      break;
+    }
+    (void) wmove(winp, y, x);
+    (void) waddch(winp, ch);
+    x++;
+    pos++;
+    strptr++;
+  }
+}
+
+static struct line_st *
+line_new(void)
+{
+  size_t memsiz = sizeof (struct line_st);
+  struct line_st *linep = (struct line_st *) mem_alloc(memsiz);
+  RETURN_VAL_IF_TRUE(IS_NULL(linep), NULL);
+  memset(linep, 0, sizeof (struct line_st));
+  linep->no = -1;
+  linep->text = NULL;
+  linep->cursor_char = 0;
+  linep->first_visible_char = 0;
+  return linep;
+}
+
+static void
+line_free(struct line_st *linep)
+{
+  RETURN_IF_TRUE(IS_NULL(linep));
+  if (!line_is_null(linep)) {
+    (void) mem_free(linep->text);
+  }
+  (void) mem_free(linep);
+}
+
+static void
+line_text_alloc(struct line_st *linep, const INT32 nbytes)
+{
+  if (nbytes <= 0) {
+    if (!line_is_null(linep)) {
+      (void) mem_free(linep->text);
+      linep->text = NULL;
+    }
+  } else {
+    if (line_is_null(linep)) {
+      str_alloc(&linep->text, nbytes);
+    } else {
+      str_realloc(&linep->text, nbytes);
+    }
+    line_edit_char(linep, nbytes, '\0');
+  }
+}
+
+static INT32
+line_is_null(struct line_st *linep)
+{
+  INT32 retval = IS_NULL(linep->text) ? TRUE : FALSE;
+  return retval;
+}
+
+static INT32
+line_len(struct line_st *linep)
+{
+  INT32 retval = (line_is_null(linep)) ? 0 : strlen(linep->text);
+  return retval;
+}
+
+static void
+line_prepend_char(struct line_st *linep, const CHAR8 ch)
+{
+  if (line_is_null(linep)) {
+    line_append_char(linep, ch);
+  } else {
+    line_insert_char(linep, 0, ch);
+  }
+}
+
+static INT32
+line_strstr(struct line_st *linep, const CHAR8 *str)
+{
+  RETURN_VAL_IF_TRUE(line_is_null(linep) || (IS_NULL(str)), 0);
+  INT32 retval = strstr(linep->text, str) ? 1 : 0;
+  return retval;
+}
+
+static struct buffer_st
+buffer_new(void)
+{
+  struct buffer_st bfr;
+  memset(&bfr, 0, sizeof (struct buffer_st));
+  return bfr;
+}
+
+static void
+buffer_reset(struct buffer_st *bfrp)
+{
+  RETURN_IF_TRUE(IS_NULL(bfrp));
+  memset(bfrp, 0, sizeof (struct buffer_st));
+  bfrp->file_name = NULL;
+  bfrp->first_line = NULL;
+  bfrp->line_count = 0;
+  bfrp->current_line = NULL;
+  bfrp->top_line = NULL;
+  bfrp->bottom_line = NULL;
+  bfrp->is_dirty = FALSE;
+}
+
+static void
+buffer_renum_lines(struct buffer_st *bfrp)
+{
+  if (bfrp->line_count > 0) {
+    INT32 i = 0;
+    struct line_st *p = NULL;
+    for (p = bfrp->first_line; !IS_NULL(p); p = p->next_node) {
+      p->no = i++;
+    }
+  }
+}
+
+static struct line_st *
+buffer_get_line(struct buffer_st *bfrp, const INT32 pos)
+{
+  RETURN_VAL_IF_TRUE(IS_NULL(bfrp), NULL);
+  struct line_st *linep = bfrp->first_line;
+  INT32 n = 0;
+  while (TRUE) {
+    if (pos == n) {
+      break;
+    }
+    n++;
+    if (IS_NULL(linep->next_node)) {
+      break;
+    }
+    linep = linep->next_node;
+  }
+  return linep;
+}
+
+static void
+buffer_prepend_line(struct buffer_st *bfrp, struct line_st *newlinep)
+{
+  RETURN_IF_TRUE(IS_NULL(bfrp));
+  struct line_st *nextlinep = NULL;
+  if (bfrp->line_count > 0) {
+    nextlinep = bfrp->first_line;
+    nextlinep->prev_node = newlinep;
+  }
+  newlinep->prev_node = NULL;
+  newlinep->next_node = nextlinep;
+  bfrp->first_line = newlinep;
+  buffer_after_line_added(bfrp);
+}
+
+static void
+buffer_append_line(struct buffer_st *bfrp, struct line_st *newlinep)
+{
+  if (!bfrp->line_count) {
+    buffer_prepend_line(bfrp, newlinep);
+  } else {
+    struct line_st *prevlinep = buffer_get_line(bfrp, bfrp->line_count - 1);
+    prevlinep->next_node = newlinep;
+    newlinep->next_node = NULL;
+    newlinep->prev_node = prevlinep;
+    buffer_after_line_added(bfrp);
+  }
+}
+
+static void
+buffer_insert_line(struct buffer_st *bfrp, const INT32 pos,
+		   struct line_st *newlinep)
+{
+  if (!pos) {
+    buffer_prepend_line(bfrp, newlinep);
+  } else {
+    struct line_st *nxtp = buffer_get_line(bfrp, pos);
+    struct line_st *prvp = buffer_get_line(bfrp, pos - 1);
+    nxtp->prev_node = newlinep;
+    prvp->next_node = newlinep;
+    newlinep->next_node = nxtp;
+    newlinep->prev_node = prvp;
+    buffer_after_line_added(bfrp);
+  }
+}
+
+static void
+buffer_drop_line(struct buffer_st *bfrp, const INT32 pos)
+{
+  RETURN_IF_TRUE(bfrp->line_count == 0);
+  struct line_st *linep = buffer_get_line(bfrp, pos);
+  if (!pos) {
+    if (!IS_NULL(linep->next_node)) {
+      linep->next_node->prev_node = NULL;
+      bfrp->first_line = linep->next_node;
+    } else {
+      bfrp->first_line = NULL;
+    }
+    goto end;
+  }
+  if (pos == bfrp->line_count - 1) {
+    linep->prev_node->next_node = NULL;
+    goto end;
+  }
+  linep->prev_node->next_node = linep->next_node;
+  linep->next_node->prev_node = linep->prev_node;
+ end:
+  line_free(linep);
+  linep = NULL;
+  bfrp->line_count--;
+  buffer_renum_lines(bfrp);
+}
+
+static void
+buffer_clear(struct buffer_st *bfrp)
+{
+  RETURN_IF_TRUE(IS_NULL(bfrp) || (!bfrp->line_count));
+  struct line_st *p = bfrp->first_line;
+
+  _buffer_remove_all_lines(p);
+  buffer_reset(bfrp);
+}
+
+static INT32
+buffer_load_file(struct buffer_st *bfrp)
+{
+  INT32 retval = TRUE;
+  INT32 fd = open(bfrp->file_name, O_RDONLY, 0);
+  if (fd == -1) {
+    retval = FALSE;
+  } else {
+    struct line_st *linep = NULL;
+    CHAR8 ch;
+    while (file_read_byte(fd, &ch)) {
+      if (!linep) {
+	buffer_append_line(bfrp, line_new());
+	linep = bfrp->first_line;
+      }
+      switch (ch) {
+      case TAB_CHAR:
+	_buffer_process_loaded_tab(linep);
+	break;
+      case CLRF_CHAR:
+	_buffer_process_loaded_newline_char(bfrp, &linep);
+	break;
+      default:
+	line_append_char(linep, ch);
+	break;
+      }
+    }
+    close(fd);
+    if (!IS_NULL(linep)) {
+      if (line_is_null(linep)) {
+	buffer_drop_line(bfrp, bfrp->line_count - 1);
+      }
+    }
+    if (!bfrp->line_count) {
+      buffer_append_line(bfrp, line_new());
+    }
+    buffer_renum_lines(bfrp);
+  }
+  return retval;
+}
+
+static INT32
+buffer_save_file(struct buffer_st *bfrp)
+{
+  INT32 retval = TRUE;
+  INT32 fd = open(bfrp->file_name, FILE_PERMISSIONS);
+  if (fd == -1) {
+    retval = FALSE;
+  } else {
+    INT32 i;
+    CHAR8 *str = NULL;
+    struct line_st *linep = NULL;
+    INT32 len;
+    for (i = 0; i < bfrp->line_count; i++) {
+      linep = buffer_get_line(bfrp, i);
+      if (line_is_null(linep)) {
+	str = "";
+	len = 0;
+      } else {
+	len = line_len(linep);
+	str_alloc(&str, len);
+	strcpy(str, linep->text);
+      }
+      file_write_str(fd, str, TRUE);
+    }
+    close(fd);
+  }
+  bfrp->is_dirty = FALSE;
+  return retval;
+}
+
+static INLINE_ATTRIB void
+_buffer_process_loaded_tab(struct line_st *linep)
+{
+  line_append_char(linep, SPACE_CHAR);
+}
+
+static INLINE_ATTRIB void
+_buffer_process_loaded_newline_char(struct buffer_st *bfrp, struct line_st **linep)
+{
+  buffer_append_line(bfrp, line_new());
+  *linep = buffer_get_line(bfrp, bfrp->line_count - 1);
+}
+
+/*
+  static INLINE_FUNCTION INT32 edt_char_idx_to_x(const char_idx_t char_idx)
+  {
+  INT32 x = !(char_idx % COLS_COUNT()) ? 0 : char_idx - (COLS_COUNT() * (char_idx / COLS_COUNT()));
+  return UPPER_LEFT_CORNER_X + INT32_TO_INT16(x);
+  }
+*/
+static INLINE_ATTRIB INT32
+edt_char_idx_to_x(const char_idx_t char_idx)
+{
+  INT32 divisor = math_qmultiply(FRAME_WIDTH(), math_qdivide(char_idx, FRAME_WIDTH()));
+  INT32 x = !(char_idx % FRAME_WIDTH()) ? 0 : char_idx - divisor;
+  return TOP_LEFT_X + INT_32_TO_16(x);
+}
+
+static INT32
+edt_is_BOL(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  INT32 retval = (linep->cursor_char == 0) ? TRUE : FALSE;
+  return retval;
+}
+
+static INT32
+edt_is_EOL(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  INT32 retval = (linep->cursor_char == line_len(linep)) ? TRUE : FALSE;
+  return retval;
+}
+
+static INT32
+edt_is_lhedge(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  INT32 retval = (edt_char_idx_to_x(linep->cursor_char) == TOP_LEFT_X) ? TRUE : FALSE;
+  return retval;
+}
+
+static INT32
+edt_is_rhedge(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  INT32 retval = (edt_char_idx_to_x(linep->cursor_char) == FRAME_WIDTH() - 1) ? TRUE : FALSE;
+  return retval;
+}
+
+static void
+edt_to_lhedge(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  while (!IS_TRUE(edt_is_BOL()) && !IS_TRUE(edt_is_lhedge())) {
+    edt_bkwd_key();
+  }
+}
+
+static void
+edt_to_rhedge(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  while (!IS_TRUE(edt_is_EOL()) && !IS_TRUE(edt_is_rhedge())) {
+    edt_frwd_key();
+  }
+}
+
+static void
+edt_scroll_bkwd(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  edt_to_lhedge();
+  RETURN_IF_TRUE(!IS_TRUE(_edt_need_bkwd_hscroll()));
+  linep->first_visible_char = (linep->first_visible_char > 0) ? linep->first_visible_char - FRAME_WIDTH() : 0;
+  linep->cursor_char--;
+}
+
+static void
+edt_scroll_frwd(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  edt_to_rhedge();
+  RETURN_IF_TRUE(!IS_TRUE(_edt_need_frwd_hscroll()));
+  linep->first_visible_char += FRAME_WIDTH();
+  linep->cursor_char = linep->first_visible_char;
+}
+
+static void
+edt_accept_key(INT32 key)
+{
+  key = INT_32_TO_16(key);
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  INT32 len = conio_get_key_length(key);
+  if ((len != 1) || (key <= 0)) {
+    flash();
+  }
+  RETURN_IF_TRUE(len != 1);
+  buffer_after_edit(g_current_user_file_ptr);
+  if (line_is_null(linep)) {
+    line_append_char(linep, (const CHAR8) key);
+    linep->cursor_char = 1;
+  } else {
+    if (edt_is_EOL()) {
+      line_append_char(linep, (const CHAR8) key);
+    } else {
+      line_insert_char(linep, linep->cursor_char, (const CHAR8) key);
+    }
+    if (IS_TRUE(_edt_need_frwd_hscroll())) {
+      edt_scroll_frwd();
+    } else {
+      linep->cursor_char++;
+    }
+  }
+  draw_line(linep);
+  cursor_after_changed();
+}
+
+static void
+edt_up_key(void)
+{
+  bool need_redraw = false;
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  RETURN_IF_TRUE(IS_NULL(g_current_user_file_ptr->current_line->prev_node));
+  if (g_current_user_file_ptr->current_line == g_current_user_file_ptr->top_line) {
+    g_current_user_file_ptr->top_line = g_current_user_file_ptr->top_line->prev_node;
+    need_redraw = true;
+  }
+  g_current_user_file_ptr->current_line = g_current_user_file_ptr->current_line->prev_node;
+  if (need_redraw) {
+    CALL_FUNCPTR(redrawfunc);
+  } else {
+    cursor_after_changed();
+  }
+}
+
+static void
+edt_down_key(screen_draw_func drawfunc)
+{
+  bool need_redraw = false;
+  RETURN_IF_TRUE(IS_NULL(g_current_user_file_ptr->current_line->next_node));
+  if (g_current_user_file_ptr->current_line == g_current_user_file_ptr->bottom_line) {
+    g_current_user_file_ptr->top_line = g_current_user_file_ptr->top_line->next_node;
+    need_redraw = true;
+  }
+  g_current_user_file_ptr->current_line = g_current_user_file_ptr->current_line->next_node;
+  if (need_redraw) {
+    CALL_FUNCPTR(drawfunc);
+  } else {
+    cursor_after_changed();
+  }
+}
+
+static void
+edt_frwd_key()
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  RETURN_IF_TRUE(IS_TRUE(edt_is_EOL()));
+  if (IS_TRUE(_edt_need_frwd_hscroll())) {
+    edt_scroll_frwd();
+    draw_line(linep);
+  } else {
+    linep->cursor_char++;
+  }
+  cursor_after_changed();
+}
+
+static void
+edt_bkwd_key()
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  RETURN_IF_TRUE(IS_TRUE(edt_is_BOL()));
+  if (IS_TRUE(_edt_need_bkwd_hscroll())) {
+    edt_scroll_bkwd();
+    draw_line(linep);
+  } else {
+    linep->cursor_char--;
+  }
+  cursor_after_changed();
+}
+
+static void
+edt_to_BOL_key(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  while (!IS_TRUE(edt_is_BOL())) {
+    edt_bkwd_key();
+  }
+}
+
+static void
+edt_to_EOL_key(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  while (!IS_TRUE(edt_is_EOL())) {
+    edt_frwd_key();
+  }
+}
+
+static void
+edt_pgdown_key(screen_draw_func drawfunc)
+{
+  RETURN_IF_TRUE(IS_NULL(g_current_user_file_ptr->bottom_line->next_node));
+  g_current_user_file_ptr->top_line = g_current_user_file_ptr->bottom_line->next_node;
+  g_current_user_file_ptr->current_line = g_current_user_file_ptr->top_line;
+  CALL_FUNCPTR(drawfunc);
+}
+
+static void
+edt_pgup_key(const INT32 delta)
+{
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  RETURN_IF_TRUE(IS_NULL(g_current_user_file_ptr->top_line->prev_node));
+  INT32 no = g_current_user_file_ptr->top_line->no;
+  while (TRUE) {
+    if (!buffer_get_line(g_current_user_file_ptr, no)->prev_node) {
+      break;
+    }
+    if (g_current_user_file_ptr->top_line->no - no == delta) {
+      break;
+    }
+    no--;
+  }
+  g_current_user_file_ptr->top_line = buffer_get_line(g_current_user_file_ptr, no);
+  g_current_user_file_ptr->current_line = g_current_user_file_ptr->top_line;
+  CALL_FUNCPTR(redrawfunc);
+}
+
+static void
+edt_home_key(screen_draw_func drawfunc)
+{
+  g_current_user_file_ptr->top_line = buffer_get_line(g_current_user_file_ptr, 0);
+  g_current_user_file_ptr->current_line = g_current_user_file_ptr->top_line;
+  CALL_FUNCPTR(drawfunc);
+}
+
+static void
+edt_tab_key(void)
+{
+  INT32 i;
+
+  INT32 colno = g_current_user_file_ptr->current_line->cursor_char + 1;
+  INT32 tabstop = (INT32) g_tab_stop;
+  INT32 nspaces = tabstop - (colno - 1) % tabstop;
+  insert_spaces(nspaces);
+}
+
+static void
+edt_return_key(void)
+{
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  _edt_save_page();
+  if (line_is_null(linep)) {
+    buffer_insert_line(g_current_user_file_ptr, linep->no, line_new());
+    goto end;
+  }
+  if (!linep->cursor_char) {
+    buffer_insert_line(g_current_user_file_ptr, linep->no, line_new());
+    goto end;
+  }
+  if (IS_TRUE(edt_is_EOL())) {
+    if (!linep->next_node) {
+      buffer_append_line(g_current_user_file_ptr, line_new());
+    } else {
+      buffer_insert_line(g_current_user_file_ptr, linep->next_node->no, line_new());
+    }
+    goto end;
+  } else {
+    _edt_break_line();
+  }
+ end:
+  _edt_restore_page();
+  CALL_FUNCPTR(redrawfunc);
+  edt_down_key(redrawfunc);
+  if (g_auto_indent) {
+    _edt_indent_line(redrawfunc);
+  }
+  buffer_after_edit(g_current_user_file_ptr);
+}
+
+static void
+edt_backspace_key(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  RETURN_IF_TRUE(IS_TRUE(edt_is_BOL()));
+  edt_bkwd_key();
+  edt_drop_char_key();
+}
+
+static void
+edt_drop_char_key(void)
+{
+  if (_edt_need_bkwd_hscroll()) {
+    edt_scroll_bkwd();
+  }
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  if (line_is_null(linep)) {
+    if (linep->next_node) {
+      edt_drop_line_key(redrawfunc);
+    } else {
+      flash();
+    }
+    return;
+  }
+  if (IS_TRUE(edt_is_EOL())) {
+    if (linep->next_node) {
+      if (line_is_null(linep->next_node)) {
+	edt_down_key(NULL);
+	edt_drop_line_key(redrawfunc);
+      } else {
+	_edt_merge_lines(redrawfunc);
+      }
+    }
+    return;
+  }
+  line_drop_char(linep, linep->cursor_char);
+  if (line_is_null(linep)) {
+    linep->first_visible_char = 0;
+    linep->cursor_char = 0;
+  } else {
+    if (linep->first_visible_char >= line_len(linep)) {
+      linep->first_visible_char = 0;
+    }
+  }
+  buffer_after_edit(g_current_user_file_ptr);
+  draw_line(linep);
+  cursor_after_changed();
+}
+
+static void
+edt_drop_chars_key(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  RETURN_IF_TRUE(IS_TRUE(edt_is_EOL()));
+  INT32 len = linep->cursor_char;
+  str_realloc(&linep->text, len);
+  if (linep->first_visible_char < line_len(linep)) {
+    linep->first_visible_char = 0;
+  }
+  buffer_after_edit(g_current_user_file_ptr);
+  draw_line(linep);
+  cursor_after_changed();
+}
+
+static void
+edt_drop_line_key(screen_draw_func drawfunc)
+{
+  RETURN_IF_TRUE(g_current_user_file_ptr->line_count <= 1);
+  _edt_save_page();
+  buffer_drop_line(g_current_user_file_ptr, g_current_line_no);
+  if (g_current_line_no > g_current_user_file_ptr->line_count - 1) {
+    g_current_line_no = g_current_user_file_ptr->line_count - 1;
+  }
+  if (g_top_line_no > g_current_user_file_ptr->line_count - 1) {
+    g_top_line_no = g_current_user_file_ptr->line_count - 1;
+  }
+  _edt_restore_page();
+  buffer_after_edit(g_current_user_file_ptr);
+  CALL_FUNCPTR(drawfunc);
+}
+
+static void
+edt_drop_lines_key(void)
+{
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  if (g_current_user_file_ptr->line_count > 1) {
+    if (!IS_NULL(g_current_user_file_ptr->current_line->next_node)) {
+      edt_down_key(NULL);
+    }
+    while (TRUE) {
+      if (g_current_user_file_ptr->line_count == 1) {
+	break;
+      }
+      if (IS_NULL(g_current_user_file_ptr->current_line->next_node)) {
+	edt_drop_line_key(NULL);
+	break;
+      }
+      edt_drop_line_key(NULL);
+    }
+  }
+  CALL_FUNCPTR(redrawfunc);
+}
+
+static void
+edt_copy_chars_key(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(line_is_null(linep));
+  RETURN_IF_TRUE(IS_TRUE(edt_is_EOL()));
+  if (!IS_NULL(g_text_copied)) {
+    free(g_text_copied);
+    g_text_copied = NULL;
+  }
+  register CHAR8 *strp = linep->text + linep->cursor_char;
+  CHAR8 ch;
+  INT32 len = 0;
+  while (*strp) {
+    ch = *strp;
+    if (!ch) {
+      break;
+    }
+    len++;
+    if (IS_NULL(g_text_copied)) {
+      str_alloc(&g_text_copied, len);
+    } else {
+      str_realloc(&g_text_copied, len);
+    }
+    *(g_text_copied + len - 1) = ch;
+    strp++;
+  }
+}
+
+static void
+edt_yank_chars_key(void)
+{
+  RETURN_IF_TRUE(IS_NULL(g_text_copied));
+  INT32 pos = g_current_user_file_ptr->current_line->cursor_char;
+  INT32 tmp = pos;
+  CHAR8 ch;
+  CHAR8 *txt = g_text_copied;
+  while (*txt) {
+    ch = *txt;
+    if (line_is_null(g_current_user_file_ptr->current_line)) {
+      line_append_char(g_current_user_file_ptr->current_line, ch);
+    } else {
+      line_insert_char(g_current_user_file_ptr->current_line, pos, ch);
+    }
+    pos++;
+    txt++;
+  }
+  g_current_user_file_ptr->current_line->cursor_char = tmp;
+  buffer_after_edit(g_current_user_file_ptr);
+  draw_line(g_current_user_file_ptr->current_line);
+  cursor_after_changed();
+}
+
+static void
+edt_yank_lines_key(struct buffer_st *srcbfrp)
+{
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  struct buffer_st *destbfrp = g_current_user_file_ptr;
+  RETURN_IF_TRUE(!srcbfrp->line_count);
+  struct line_st *linep, *newlinep;
+  INT32 pos = destbfrp->current_line->no;
+  for (linep = srcbfrp->first_line; !IS_NULL(linep); linep = linep->next_node) {
+    newlinep = line_new();
+    CHAR8 *strp = linep->text;
+    line_append_str(newlinep, strp);
+    buffer_insert_line(destbfrp, pos, newlinep);
+    pos++;
+  }
+  buffer_after_edit(destbfrp);
+  CALL_FUNCPTR(redrawfunc);
+}
+
+static void
+edt_find_bytext_key(const INT32 input_y)
+{
+  INT32 no = -1;
+  if (IS_NULL(g_search_str)) {
+    g_search_str = "srch";
+  }
+  if (dlg_input_dlg(input_y, "Search: ", g_search_str)) {
+    INT32 inputlen = STR_LENGTH(g_user_input);
+    str_alloc(&g_search_str, inputlen);
+    strcpy(g_search_str, g_user_input);
+    struct line_st *linep = NULL;
+    for (linep = g_current_user_file_ptr->current_line; !IS_NULL(linep); linep =
+	   linep->next_node) {
+      if (line_strstr(linep, g_search_str)) {
+	no = linep->no;
+	break;
+      }
+    }
+    if (no != -1) {
+      edt_find_byno_key(no);
+    } else {
+      dlg_msgbox(input_y, errtype_to_str(ERROR_LOCATE_LINE));
+    }
+  }
+}
+
+static void
+edt_find_byno_key(const INT32 line_no)
+{
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  if (IS_TRUE(_edt_is_in_page(line_no))) {
+    goto end;
+  } else {
+    edt_home_key(NULL);
+    while (1) {
+      if ((line_no >= g_current_user_file_ptr->top_line->no)
+	  && (line_no <= g_current_user_file_ptr->bottom_line->no)) {
+	break;
+      }
+      edt_pgdown_key(NULL);
+    }
+  }
+ end:
+  g_current_user_file_ptr->current_line = buffer_get_line(g_current_user_file_ptr, line_no);
+  CALL_FUNCPTR(redrawfunc);
+}
+
+static void
+edt_read_config(void)
+{
+  (void) config_read_option("autoindent", &g_auto_indent);
+  (void) config_read_option("tabstop", &g_tab_stop);
+}
+
+static INLINE_ATTRIB INT32
+_edt_need_frwd_hscroll(void)
+{
+  INT32 retval = (IS_TRUE(edt_is_rhedge()) && !IS_TRUE(edt_is_EOL())) ? TRUE : FALSE;
+  return retval;
+}
+
+static INLINE_ATTRIB INT32
+_edt_need_bkwd_hscroll(void)
+{
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  INT32 retval = ((IS_TRUE(edt_is_lhedge())) && (linep->first_visible_char > 0)) ? TRUE : FALSE;
+  return retval;
+}
+
+static void
+_edt_prepend_spaces(struct line_st *linep, INT32 *i)
+{
+  CHAR8 ch;
+  for (*i = 0; *i < line_len(linep->prev_node); (*i)++) {
+    ch = *(linep->prev_node->text + (*i));
+    if (ch != SPACE_CHAR) {
+      break;
+    }
+    line_prepend_char(linep, ch);
+  }
+}
+
+static void
+_edt_indent_line(screen_draw_func drawfunc)
+{
+  struct buffer_st *bfrp = g_current_user_file_ptr;
+  struct line_st *linep = g_current_user_file_ptr->current_line;
+  RETURN_IF_TRUE(IS_NULL(linep->prev_node));
+  RETURN_IF_TRUE(line_is_null(linep->prev_node));
+  INT32 i;
+  _edt_prepend_spaces(linep, &i);
+  linep->cursor_char = i;
+  buffer_after_edit(bfrp);
+  CALL_FUNCPTR(drawfunc);
+}
+
+static void
+_edt_break_line(void)
+{
+  struct buffer_st *bfrp = g_current_user_file_ptr;
+  struct line_st *newlinep = line_new();
+  INT32 i;
+  CHAR8 ch;
+  for (i = bfrp->current_line->cursor_char; i < line_len(bfrp->current_line); i++) {
+    ch = *(bfrp->current_line->text + i);
+    line_append_char(newlinep, ch);
+  }
+  INT32 len = bfrp->current_line->cursor_char;
+  str_realloc(&bfrp->current_line->text, len);
+  if (bfrp->current_line->first_visible_char >= line_len(bfrp->current_line)) {
+    bfrp->current_line->first_visible_char = 0;
+  }
+  if (!bfrp->current_line->next_node) {
+    buffer_append_line(bfrp, newlinep);
+  } else {
+    buffer_insert_line(bfrp, bfrp->current_line->next_node->no, newlinep);
+  }
+}
+
+static void
+_edt_merge_lines(screen_draw_func drawfunc)
+{
+  register CHAR8 *strp = g_current_user_file_ptr->current_line->next_node->text;
+  line_append_str(g_current_user_file_ptr->current_line, strp);
+  edt_down_key(NULL);
+  edt_drop_line_key(NULL);
+  edt_up_key();
+  strp = NULL;
+  buffer_after_edit(g_current_user_file_ptr);
+  CALL_FUNCPTR(drawfunc);
+}
+
+static INT32
+_edt_is_in_page(const INT32 line_no)
+{
+  struct buffer_st *bfrp = g_current_user_file_ptr;
+  RETURN_VAL_IF_TRUE(IS_NULL(bfrp), FALSE);
+  INT32 retval = ((line_no >= bfrp->top_line->no) && (line_no <= bfrp->bottom_line->no)) ? TRUE : FALSE;
+  return retval;
+}
+
+static INLINE_ATTRIB void
+_edt_save_page(void)
+{
+  g_current_line_no = g_current_user_file_ptr->current_line->no;
+  g_top_line_no = g_current_user_file_ptr->top_line->no;
+}
+
+static INLINE_ATTRIB void
+_edt_restore_page(void)
+{
+  g_current_user_file_ptr->top_line = buffer_get_line(g_current_user_file_ptr, g_top_line_no);
+  g_current_user_file_ptr->current_line = buffer_get_line(g_current_user_file_ptr, g_current_line_no);
+}
+
+static INLINE_ATTRIB void
+undo_init(void)
+{
+  g_killed_line = *line_new();
+  g_killed_line.no = -1;
+}
+
+static void
+undo_set_line(struct line_st *linep)
+{
+  RETURN_IF_TRUE(IS_NULL(linep));
+  g_killed_line.no = linep->no;
+  g_killed_line.text = linep->text;
+  g_killed_line.cursor_char = linep->cursor_char;
+  g_killed_line.first_visible_char = linep->first_visible_char;
+  g_killed_line.prev_node = g_killed_line.next_node = NULL;
+}
+
+static INT32
+undo_restore_line(struct buffer_st *bfrp)
+{
+  RETURN_VAL_IF_TRUE(IS_NULL(bfrp), FALSE);
+  if (g_killed_line.no == -1) {
+    return FALSE;
+  }
+  INT32 no = (g_killed_line.no > bfrp->line_count - 1) ? bfrp->line_count - 1 : g_killed_line.no;
+  struct line_st *ptr = line_new();
+  *ptr = g_killed_line;
+  buffer_insert_line(bfrp, no, ptr);
+  return TRUE;
+}
+
+static CHAR8 *
+config_get_path(void)
+{
+  const CHAR8 *home = getenv("HOME");
+  INT32 len = STR_LENGTH(CONFIG_FILE_NAME) + STR_LENGTH(home) + 1;
+  CHAR8 *retval = NULL;
+  str_alloc(&retval, len);
+  (void) sprintf(retval, "%s%s", home, CONFIG_FILE_NAME);
+  return retval;
+}
+
+static INT32
+config_load(void)
+{
+  CHAR8 *path = config_get_path();
+  if (!file_exists(path)) {
+    return FALSE;
+  }
+  g_config_file = buffer_new();
+  buffer_reset(&g_config_file);
+  INT32 len = STR_LENGTH(path);
+  str_alloc(&g_config_file.file_name, len);
+  strcpy(g_config_file.file_name, path);
+  INT32 retval = buffer_load_file(&g_config_file);
+  if (IS_TRUE(retval)) {
+    buffer_renum_lines(&g_config_file);
+  }
+  return retval;
+}
+
+static INT32
+config_read_option(const CHAR8 *name, INT32 *val)
+{
+  const CHAR8 *sep = "=";
+  CHAR8 *token = NULL;
+  INT32 i;
+  *val = 0;
+  struct line_st *linep = NULL;
+  for (i = 0; i < g_config_file.line_count; i++) {
+    token = NULL;
+    linep = buffer_get_line(&g_config_file, i);
+    if (line_is_null(linep)) {
+      continue;
+    }
+    token = strtok(linep->text, sep);
+    if (token) {
+      if (strcmp(token, name) == 0) {
+	token = strtok(NULL, sep);
+	if (token) {
+	  *val = atoi(token);
+	  return TRUE;
+	}
+	break;
+      }
+    }
+  }
+  return FALSE;
+}
+
+static INT32
+dlg_input_dlg(const INT32 y, const CHAR8 *prompt, const CHAR8 *definp)
+{
+  screen_draw_func redrawfunc = (screen_draw_func) redraw_screen;
+  INT32 dlen = STR_LENGTH(definp);
+  strcpy(g_user_input, definp);
+  g_user_input[dlen] = 0;
+  INT32 plen = STR_LENGTH(prompt);
+  g_prompt_bar = conio_create_window(1, plen + TOP_LEFT_X, y, TOP_LEFT_X);
+  g_input_bar = conio_create_window(1, MAX_USER_INPUT_SIZE, y, TOP_LEFT_X + plen + 1);
+  if (conio_has_colors()) {
+    wbkgd(g_input_bar, COLOR_PAIR(INPUT_BAR_COLOR_PAIR));
+    wbkgd(g_prompt_bar, COLOR_PAIR(INPUT_BAR_COLOR_PAIR));
+  }
+  dlg_redraw_prompt_bar(prompt);
+  dlg_redraw_input_bar();
+  INT32 key = (INT32) wgetch(g_input_bar);
+  while (!((key) == KS_CANCEL_INPUT)) {
+    if (((key) == '\r')) { // User hits ENTER.
+      if (!dlen) { // if user's input is empty
+	flash(); // we just flash the screen and do nothing,
+      } else {
+	break; // otherwise user has entered sth and we quit the loop.
+      }
+    } else if (key == KS_DROP_PREV_CHAR) { // Well, user hits BACKSPACE.
+      if (!dlen) { // Again, if his input is empty then there's nothing to delete so we just
+	flash(); // flash the screen
+      } else {
+	dlen--; // Otherwise we just remove the last CHAR8 of the input
+	g_user_input[dlen] = '\0'; // by pushing it out of the input array. Then we
+	goto end;
+	//  jump to where the input area gets redrawn and the
+	// dialog starts waiting for another user's key.
+      }
+    } else if (conio_get_key_length(key) == 1) { // We are here when user presses sth printable.
+      if (dlen == MAX_USER_INPUT_SIZE) { // First we check if his input data has already reached the available limit.
+	flash(); // If yes we accept nothing and just flash the screen.
+      } else { // Otherwise
+	dlen++; // we increase the size of the input array
+	g_user_input[dlen] = '\0'; // by shifting zero CHAR8 to the right
+	g_user_input[dlen - 1] = (const CHAR8) key; // to create a space for storing the just pressed CHAR8.
+	goto end;
+	// Then again we jump to where the input area gets redrawn and the
+	// dialog starts waiting for another user's key.
+      }
+    }
+  end:
+    dlg_redraw_input_bar(); // Here we redraw the input area
+    key = (INT32) wgetch(g_input_bar); // and wait for another key hit by user. If he presses ESC
+    // we quit the loop.
+  }
+  dlg_remove_input_bar(); // it's time to physically remove the input area from the screen
+  dlg_remove_prompt_bar(); // we do the same to the prompt area
+  CALL_FUNCPTR(redrawfunc); // it's wise to redraw the whole screen after removing the dialogs
+  INT32 retval = ((key) == '\r') ? TRUE : FALSE; // We return bvTrue to inform that the dialog was closed after user pressed ENTER.
+  // If instead user cancelled with the ESC key, we return bvFalse
+  return retval;
+}
+
+static INT32
+dlg_yesno_dlg(const INT32 y, const CHAR8 *prompt, const CHAR8 *definp)
+{
+  INT32 retval = FALSE;
+  INT32 dlgres = dlg_input_dlg(y, prompt, definp);
+  while (TRUE) {
+    if (!dlgres) {
+      break;
+    }
+    if (IS_TRUE(STR_COMPARE(g_user_input, "yes"))) {
+      retval = TRUE;
+      break;
+    }
+    if (IS_TRUE(STR_COMPARE(g_user_input, "no"))) {
+      break;
+    }
+    dlgres = dlg_input_dlg(y, prompt, definp);
+  }
+  return retval;
+}
+
+static void
+dlg_msgbox(const INT32 y, const CHAR8 *msg)
+{
+  screen_draw_func drawfunc = (screen_draw_func) redraw_screen;
+  g_prompt_bar = conio_create_window(1, STR_LENGTH(msg), y, TOP_LEFT_X);
+  if (conio_has_colors()) {
+    wbkgd(g_prompt_bar, COLOR_PAIR(INPUT_BAR_COLOR_PAIR));
+  }
+  dlg_redraw_prompt_bar(msg);
+  CALL_FUNCPTR(drawfunc);
+}
+
+static INLINE_ATTRIB void
+dlg_remove(void)
+{
+  dlg_remove_prompt_bar();
+  dlg_remove_input_bar();
+}
+
+static const CHAR8 *
+errtype_to_str(const enum enum_errors ecode)
+{
+  struct error_info_st *p = g_error_list;
+  while (!IS_NULL(p->description)) {
+    if (IS_EQUAL(ecode, p->symbol)) {
+      return (const CHAR8 *) p->description;
+    }
+    p++;
+  }
+  return "[UnknownErrorSymbol]";
+}
+
+static void
+abort_klein(void)
+{
+  abort();
+}
+
+static void
+atexit_callback(void)
+{
+  fputs("\n\nExiting Klein\n\n", stderr);
+}
+
+static void
+register_buffer(const CHAR8 *filename)
+{
+  INT32 found = file_exists(filename);
+  g_user_files_count++;
+  g_current_user_file_idx = g_user_files_count - 1;
+  struct buffer_st newbf = buffer_new();
+  buffer_reset(&newbf);
+  INT32 len = STR_LENGTH(filename);
+  str_alloc(&newbf.file_name, len);
+  strncpy(newbf.file_name, filename, len);
+  if (!IS_TRUE(found)) {
+    buffer_append_line(&newbf, line_new());
+    buffer_renum_lines(&newbf);
+  }
+  g_user_files[g_current_user_file_idx] = newbf;
+  g_current_user_file_ptr = &g_user_files[g_current_user_file_idx];
+  if (IS_TRUE(found)) {
+    if (!IS_TRUE(buffer_load_file(g_current_user_file_ptr))) {
+      fprintf(stderr, "%s\n", errtype_to_str(ERROR_BUFFER));
+      exit(EXIT_FAILURE);
+    }
+  }
+  g_current_user_file_ptr->top_line = buffer_get_line(g_current_user_file_ptr, 0);
+  g_current_user_file_ptr->current_line = g_current_user_file_ptr->top_line;
+  redraw_screen();
+}
+
+static void
+activate_buffer(const INT32 bfridx)
+{
+  g_current_user_file_idx = bfridx;
+  g_current_user_file_ptr = &g_user_files[g_current_user_file_idx];
+  redraw_screen();
+}
+
+static void
+init_globals(void)
+{
+  add_ctrl_key_handler(0,     KS_SHOW_HELP,                   &on_show_help                   );
+  add_ctrl_key_handler(1,     KS_OPEN_FILE,                   &on_open_file                   );
+  add_ctrl_key_handler(2,     KS_SAVE_CURRENT_FILE,           &on_save_current_file           );
+  add_ctrl_key_handler(3,     KS_SAVE_ALL_FILES,              &on_save_all_files              );
+  add_ctrl_key_handler(4,     KS_RUN_SCRIPT,                  &on_run_script                  );
+  add_ctrl_key_handler(5,     KS_SET_SCRIPT_DIR,              &on_set_script_dir              );
+  add_ctrl_key_handler(6,     KS_SHOW_CURRENT_BUFFER_INFO,    &handle_show_current_buffer_info);
+  add_ctrl_key_handler(7,     KS_LIST_OPENED_BUFFERS,         &on_list_opened_buffers         );
+  add_ctrl_key_handler(8,     KS_DROP_CURRENT_BUFFER,         &on_drop_current_buffer         );
+  add_ctrl_key_handler(9,     KS_MOVE_LINE_UP,                &on_move_line_up                );
+  add_ctrl_key_handler(10,    KS_MOVE_LINE_DOWN,              &on_move_line_down              );
+  add_ctrl_key_handler(11,    KS_MOVE_CHAR_FRWD,              &on_move_char_frwd              );
+  add_ctrl_key_handler(12,    KS_MOVE_CHAR_BKWD,              &on_move_char_bkwd              );
+  add_ctrl_key_handler(13,    KS_JUMP_TO_BOL,                 &on_jump_to_bol                 );
+  add_ctrl_key_handler(14,    KS_JUMP_TO_EOL,                 &on_jump_to_eol                 );
+  add_ctrl_key_handler(15,    KS_SCROLL_PAGE_DOWN,            &on_scroll_page_down            );
+  add_ctrl_key_handler(16,    KS_SCROLL_PAGE_UP,              &on_scroll_page_up              );
+  add_ctrl_key_handler(17,    KS_SCROLL_TO_FIRST_PAGE,        &on_scroll_to_first_page        );
+  add_ctrl_key_handler(18,    KS_INSERT_TAB,                  &on_insert_tab                  );
+  add_ctrl_key_handler(19,    KS_INSERT_CR,                   &on_insert_cr                   );
+  add_ctrl_key_handler(20,    KS_DROP_PREV_CHAR,              &on_drop_prev_char              );
+  add_ctrl_key_handler(21,    KS_DROP_NEXT_CHAR,              &on_drop_next_char              );
+  add_ctrl_key_handler(22,    KS_DROP_CURRENT_LINE,           &on_drop_current_line           );
+  add_ctrl_key_handler(23,    KS_UNDROP_CURRENT_LINE,         &on_undrop_current_line         );
+  add_ctrl_key_handler(24,    KS_COPY_NEXT_CHARS,             &on_copy_next_chars             );
+  add_ctrl_key_handler(25,    KS_YANK_NEXT_CHARS,             &on_yank_next_chars             );
+  add_ctrl_key_handler(26,    KS_LOCATE_BY_STR,               &on_locate_by_str               );
+  add_ctrl_key_handler(27,    KS_LOCATE_BY_NO,                &on_locate_by_no                );
+  add_ctrl_key_handler(28,    0,                              NULL                            );
+  add_meta_key_handler(0,     KS_DROP_NEXT_CHARS,             &on_drop_next_chars             );
+  add_meta_key_handler(1,     KS_DROP_BELOW_LINES,            &on_drop_below_lines            );
+  add_meta_key_handler(2,     KS_COPY_BELOW_LINES,            &on_copy_below_lines            );
+  add_meta_key_handler(3,     KS_YANK_BELOW_LINES,            &on_yank_below_lines            );
+  add_meta_key_handler(4,     KS_TO_NEXT_BUFFER,              &on_to_next_buffer              );
+  add_meta_key_handler(5,     KS_TO_PREV_BUFFER,              &on_to_prev_buffer              );
+  add_meta_key_handler(6,     KS_REFRESH_SCREEN,              &on_refresh_screen              );
+  add_meta_key_handler(7,     0,                              NULL                            );
+  g_script_info.work_dir = NULL;
+  g_script_info.base_name = NULL;
+  g_current_line_no = 0;
+  g_top_line_no = 0;
+}
+
+static void
+init_window(void)
+{
+  conio_start();
+  create_text_area();
+  create_status_bar();
+  create_title_bar();
+  create_hint_bar();
+}
+
+static void
+uninit_window(void)
+{
+  delwin(g_status_bar);
+  delwin(g_title_bar);
+  delwin(g_hint_bar);
+  (void) endwin();
+}
+
+static INLINE_ATTRIB void
+check_termsize(void)
+{
+  if ((FRAME_HEIGHT() < 25) || (FRAME_WIDTH() < 80)) {
+    diefmt("%s\n", "Bad screen size");
+  }
+}
+
+static INLINE_ATTRIB INT32
+lineno_to_y(const INT32 lineno)
+{
+  return lineno - g_current_user_file_ptr->top_line->no + get_text_area_y();
+}
+
+static INLINE_ATTRIB INT32
+get_text_area_y(void)
+{
+  return TOP_LEFT_Y + 1;
+}
+
+static INLINE_ATTRIB INT32
+get_title_bar_y(void)
+{
+  return TOP_LEFT_Y;
+}
+
+static INLINE_ATTRIB INT32
+get_input_bar_y(void)
+{
+  return (INT32) FRAME_HEIGHT() - 1;
+}
+
+static INLINE_ATTRIB INT32
+get_status_bar_y(void)
+{
+  return get_input_bar_y() - 1;
+}
+
+static INLINE_ATTRIB INT32
+get_hint_bar_y(void)
+{
+  return get_input_bar_y() - 2;
+}
+
+static INLINE_ATTRIB void
+create_text_area(void)
+{
+  g_text_area = conio_get_stdscr();
+}
+
+static void
+create_title_bar(void)
+{
+  _dispose_bar(g_title_bar);
+  g_title_bar = conio_create_subwindow(g_text_area, 1, FRAME_WIDTH(), get_title_bar_y(), TOP_LEFT_X);
+  _color_bar(g_title_bar, COLOR_PAIR(TITLE_BAR_COLOR_PAIR));
+}
+
+static void
+create_status_bar(void)
+{
+  _dispose_bar(g_status_bar);
+  g_status_bar = conio_create_subwindow(g_text_area, 1, FRAME_WIDTH(), get_status_bar_y(), TOP_LEFT_X);
+  _color_bar(g_status_bar, COLOR_PAIR(STATUS_BAR_COLOR_PAIR));
+}
+
+static void
+create_hint_bar(void)
+{
+  _dispose_bar(g_hint_bar);
+  g_hint_bar = conio_create_subwindow(g_text_area, 1, FRAME_WIDTH(), get_hint_bar_y(), TOP_LEFT_X);
+  _color_bar(g_hint_bar, COLOR_PAIR(HINT_BAR_COLOR_PAIR));
+}
+
+static INLINE_ATTRIB void
+draw_line(struct line_st *linep)
+{
+  conio_print_str(g_text_area,
+		  linep->text,
+		  lineno_to_y(linep->no),
+		  linep->first_visible_char,
+		  linep->first_visible_char + +FRAME_WIDTH() - 1);
+}
+
+static INLINE_ATTRIB void
+draw_cursor(void)
+{
+  INT32 y = lineno_to_y(g_current_user_file_ptr->current_line->no);
+  INT32 x = (!line_is_null(g_current_user_file_ptr->current_line)) ?
+    edt_char_idx_to_x(g_current_user_file_ptr->current_line->cursor_char) :
+    TOP_LEFT_X;
+  (void) wmove(g_text_area, y, x);
+}
+
+static void
+redraw_text_area(void)
+{
+  conio_empty_window(g_text_area, TOP_LEFT_Y, get_hint_bar_y() - 1, TOP_LEFT_X, FRAME_WIDTH());
+  struct line_st *linep = g_current_user_file_ptr->top_line;
+  g_current_user_file_ptr->bottom_line = linep;
+  INT32 y = lineno_to_y(linep->no);
+  while (TRUE) {
+    draw_line(linep);
+    if (IS_NULL(linep->next_node)) {
+      break;
+    }
+    linep = linep->next_node;
+    y = lineno_to_y(linep->no);
+    if (y == get_hint_bar_y()) {
+      break;
+    }
+    g_current_user_file_ptr->bottom_line = linep;
+  }
+}
+
+static void
+redraw_title_bar(void)
+{
+  WINDOW * winp = g_title_bar;
+  INT32 len = MAX_BAR_TEXT_SIZE;
+  CHAR8 *str = NULL;
+  str_alloc(&str, len);
+  sprintf(str, "%s - [%s]", VERSION, g_current_user_file_ptr->file_name);
+  conio_print_str(winp, str, 0, 0, len);
+  conio_refresh_window(winp);
+}
+
+static void
+redraw_status_bar(void)
+{
+  INT32 line_no = g_current_user_file_ptr->current_line->no + 1;
+  CHAR8 *dirty = (g_current_user_file_ptr->is_dirty) ? "*" : "";
+  CHAR8 *scroll_sym = "";
+  if ((!line_is_null(g_current_user_file_ptr->current_line))
+      && (g_current_user_file_ptr->current_line->first_visible_char > 0)) {
+    scroll_sym = "$";
+  }
+  INT32 len = MAX_BAR_TEXT_SIZE;
+  CHAR8 *str = NULL;
+  str_alloc(&str, len);
+  sprintf(str,
+	  "%s | #%d %s%s | Line:%d-%d%s | Col:%d | Autoindent:%s | Tabstop:%d",
+	  VERSION,
+	  g_current_user_file_idx + 1,
+	  g_current_user_file_ptr->file_name,
+	  dirty,
+	  line_no,
+	  g_current_user_file_ptr->line_count,
+	  scroll_sym,
+	  g_current_user_file_ptr->current_line->cursor_char + 1,
+	  g_auto_indent == 1 ? "On" : "Off",
+	  g_tab_stop);
+  conio_print_str(g_status_bar, str, 0, 0, len);
+  conio_refresh_window(g_status_bar);
+}
+
+static void
+redraw_help_bar(void)
+{
+  WINDOW * winp = g_hint_bar;
+  const CHAR8 *help = "F1-Help F2-Open F3-Save F4-SaveAll F5-Run F6-RunDir F7-Info F8-List F9-Drop F10-Quit";
+  INT32 len = STR_LENGTH(help);
+  conio_print_str(winp, help, 0, 0, len);
+  conio_refresh_window(winp);
+}
+
+static void
+redraw_screen(void)
+{
+  redraw_text_area();
+  redraw_title_bar();
+  redraw_help_bar();
+  redraw_status_bar();
+  draw_cursor();
+  conio_refresh_window(g_text_area);
+}
+
+static INLINE_ATTRIB void
+flash_screen(void)
+{
+  flash();
+}
+
+static void
+switch_to_console_mode(void)
+{
+  (void) endwin();
+  (void) shell_run_cmd(NULL, "clear");
+}
+
+static INLINE_ATTRIB void
+switch_to_edit_mode(void)
+{
+  CHAR8 *msg = "Press ENTER to return to KLEIN...\n";
+  file_write_str(STDOUT_FILENO, msg, FALSE);
+  (void) wgetch(g_text_area);
+  conio_refresh_window(g_text_area);
+}
+
+static command_handler_func *
+get_ctrl_key_handler(const INT32 command)
+{
+  INT32 i;
+  for (i = 0; !IS_NULL(g_ctrl_key_handlers[i].handler); i++) {
+    if (g_ctrl_key_handlers[i].command == command) {
+      return g_ctrl_key_handlers[i].handler;
+    }
+  }
+  return NULL;
+}
+
+static command_handler_func *
+get_meta_key_handler(const INT32 command)
+{
+  INT32 i;
+  for (i = 0; !IS_NULL(g_meta_key_handlers[i].handler); i++) {
+    if (g_meta_key_handlers[i].command == command) {
+      return g_meta_key_handlers[i].handler;
+    }
+  }
+  return NULL;
+}
+
+static void
+on_sigwinch()
+{
+  edt_home_key(NULL);
+  struct line_st *linep;
+  struct buffer_st *bfrp = g_current_user_file_ptr;
+  for (linep = bfrp->first_line; !IS_NULL(linep); linep = linep->next_node) {
+    linep->cursor_char = 0;
+  }
+  (void) endwin();
+  init_window();
+  redraw_screen();
+}
+
+static void
+on_sigint(INT32 arg)
+{
+  flash_screen();
+}
+
+static void
+on_show_help(void)
+{
+  if (!IS_NULL(g_text_area)) {
+    switch_to_console_mode();
+  }
+  INT32 i;
+  INT32 nhelpitems = HELP_ITEMS_COUNT;
+  CHAR8(*helpitems)[MAX_HELP_ITEM_SIZE] = g_manual_items;
+  for (i = 0; i < nhelpitems; i++) {
+    CHAR8 *strp = *(helpitems + i);
+    file_write_str(STDOUT_FILENO, strp, TRUE);
+    if (i == nhelpitems / 2) {
+      file_write_str(STDOUT_FILENO, "Press ENTER to get to the next page", TRUE);
+      getchar();
+      (void) shell_run_cmd(NULL, "clear");
+    }
+  }
+  if (!IS_NULL(g_text_area)) {
+    switch_to_edit_mode();
+  }
+}
+
+static void
+on_open_file(void)
+{
+  if (g_user_files_count == MAX_BUFFER_COUNT) {
+    dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_BUFFER));
+    return;
+  }
+  if (dlg_input_dlg(get_input_bar_y(), "Open File: ", g_current_user_file_ptr->file_name)) {
+    struct buffer_st *bfrp = NULL;
+    INT32 i;
+    for (i = 0; i < g_user_files_count; i++) {
+      bfrp = &g_user_files[i];
+      if (strcmp(bfrp->file_name, g_user_input) == 0) {
+	dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_BUFFER));
+	return;
+      }
+    }
+    register_buffer(g_user_input);
+  }
+}
+
+static void
+on_save_current_file(void)
+{
+  if (dlg_input_dlg(get_input_bar_y(), "Save As: ", g_current_user_file_ptr->file_name)) {
+    INT32 len = STR_LENGTH(g_user_input);
+    str_alloc(&g_current_user_file_ptr->file_name, len);
+    strncpy(g_current_user_file_ptr->file_name, g_user_input, len);
+    if (!IS_TRUE(buffer_save_file(g_current_user_file_ptr))) {
+      dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_SAVE));
+    } else {
+      redraw_screen();
+    }
+  }
+}
+
+static void
+on_save_all_files(void)
+{
+  struct buffer_st *bfrp = NULL;
+  INT32 i;
+  for (i = 0; i < g_user_files_count; i++) {
+    bfrp = &g_user_files[i];
+    if (!IS_TRUE(buffer_save_file(bfrp))) {
+      dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_SAVE));
+    }
+  }
+  redraw_screen();
+}
+
+static void
+on_set_script_dir(void)
+{
+  if (IS_NULL(g_script_info.work_dir)) {
+    g_script_info.work_dir = "/tmp";
+  }
+  if (dlg_input_dlg(get_input_bar_y(), "Workdir: ", g_script_info.work_dir)) {
+    CHAR8 *last_input = g_user_input;
+    INT32 len = STR_LENGTH(last_input);
+    str_alloc(&g_script_info.work_dir, len);
+    strcpy(g_script_info.work_dir, last_input);
+    if (!IS_TRUE(file_is_dir(g_script_info.work_dir))) {
+      dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_RUN_SCRIPT));
+    }
+  }
+  redraw_screen();
+}
+
+static void
+on_run_script(void)
+{
+#if defined(DEBUG_MODE_ENABLED)
+  dlg_msgbox(get_input_bar_y(), "demo mode");
+  return;
+#endif
+  if (IS_NULL(g_script_info.base_name)) {
+    g_script_info.base_name = "./script.sh";
+  }
+  INT32 len;
+  if (IS_NULL(g_script_info.base_name)) {
+    dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_BUFFER));
+    return;
+  }
+  if (dlg_input_dlg(get_input_bar_y(), "Script:", g_script_info.base_name)) {
+    len = STR_LENGTH(g_user_input);
+    str_alloc(&g_script_info.base_name, len);
+    strncpy(g_script_info.base_name, g_user_input, len);
+    switch_to_console_mode();
+    const INT32 cmd_size = 100;
+    CHAR8 cmd[cmd_size];
+    sprintf((CHAR8 *) cmd, "bash %s", g_script_info.base_name);
+    INT32 ret = shell_run_cmd(g_script_info.work_dir, (CHAR8 *) cmd);
+    if (!IS_TRUE(ret)) {
+      /* gotta do sth here !! */
+    }
+    switch_to_edit_mode();
+  }
+}
+
+static void
+handle_show_current_buffer_info(void)
+{
+  INT32 len = MAX_BAR_TEXT_SIZE;
+  CHAR8 *info = NULL;
+  str_alloc(&info, len);
+  (void) sprintf(info,
+		 "Size: %d bytes | Owner: %s | Modified: %s",
+		 (INT32) file_get_size(g_current_user_file_ptr->file_name),
+		 file_owner(g_current_user_file_ptr->file_name),
+		 file_get_mtime(g_current_user_file_ptr->file_name));
+  dlg_msgbox(get_input_bar_y(), info);
+  redraw_screen();
+}
+
+static void
+on_list_opened_buffers(void)
+{
+  switch_to_console_mode();
+  struct buffer_st *bfrp = NULL;
+  INT32 i;
+  CHAR8 *curflg;
+  CHAR8 *msg = "Buffer List:\n\n";
+  if (IS_NEGATIVE(write(STDOUT_FILENO, msg, strlen(msg)))) {
+    return;
+  }
+  for (i = 0; i < g_user_files_count; i++) {
+    bfrp = &g_user_files[i];
+    curflg = (g_current_user_file_idx == i) ? "[*]" : "";
+    CHAR8 *item = NULL;
+    str_alloc(&item, MAX_BAR_TEXT_SIZE);
+    (void) sprintf(item, "%d. %s %s\n", i + 1, bfrp->file_name, curflg);
+    if (IS_NEGATIVE(write(STDOUT_FILENO, item, STR_LENGTH(item)))) {
+      return;
+    }
+    mem_free(item);
+  }
+  switch_to_edit_mode();
+}
+
+static void
+on_drop_current_buffer(void)
+{
+  if (g_user_files_count <= 1) {
+    dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_BUFFER));
+  } else {
+    if (g_current_user_file_ptr->is_dirty) {
+      on_save_current_file();
+    }
+    INT32 nextidx = (!g_current_user_file_idx) ? g_current_user_file_idx + 1 : g_current_user_file_idx - 1;
+    buffer_clear(g_current_user_file_ptr);
+    INT32 i;
+    for (i = g_current_user_file_idx; i < g_user_files_count - 1; i++) {
+      g_user_files[i] = g_user_files[i + 1];
+    }
+    g_user_files_count--;
+    activate_buffer(nextidx);
+  }
+}
+
+static void
+on_move_line_up(void)
+{
+  edt_up_key();
+}
+
+static void
+on_move_line_down(void)
+{
+  edt_down_key((screen_draw_func) redraw_screen);
+}
+
+static void
+on_move_char_frwd(void)
+{
+  edt_frwd_key();
+}
+
+static void
+on_move_char_bkwd(void)
+{
+  edt_bkwd_key();
+}
+
+static void
+on_jump_to_bol(void)
+{
+  edt_to_BOL_key();
+}
+
+static void
+on_jump_to_eol(void)
+{
+  edt_to_EOL_key();
+}
+
+static void
+on_scroll_page_down(void)
+{
+  edt_pgdown_key((screen_draw_func) redraw_screen);
+}
+
+static void
+on_scroll_page_up(void)
+{
+  edt_pgup_key(get_status_bar_y() - get_text_area_y());
+}
+
+static void
+on_scroll_to_first_page(void)
+{
+  edt_home_key((screen_draw_func) redraw_screen);
+}
+
+static void
+on_insert_tab(void)
+{
+  edt_tab_key();
+}
+
+static void
+on_insert_cr(void)
+{
+  edt_return_key();
+}
+
+static void
+on_drop_prev_char(void)
+{
+  edt_backspace_key();
+}
+
+static void
+on_drop_next_char(void)
+{
+  edt_drop_char_key();
+}
+
+static void
+on_drop_next_chars(void)
+{
+  edt_drop_chars_key();
+}
+
+static void
+on_drop_current_line(void)
+{
+  undo_set_line(g_current_user_file_ptr->current_line);
+  edt_drop_line_key((screen_draw_func) redraw_screen);
+}
+
+static void
+on_drop_below_lines(void)
+{
+  edt_drop_lines_key();
+}
+
+static void
+on_undrop_current_line(void)
+{
+  if (IS_TRUE(undo_restore_line(g_current_user_file_ptr))) {
+    g_current_user_file_ptr->is_dirty = TRUE;
+    redraw_screen();
+  }
+}
+
+static void
+on_copy_next_chars(void)
+{
+  edt_copy_chars_key();
+}
+
+static void
+on_copy_below_lines(void)
+{
+  if (dlg_input_dlg(get_input_bar_y(), "N: ", "1")) {
+    warn_numeric_input();
+    INT32 count = atoi(g_user_input);
+    INT32 curno = g_current_user_file_ptr->current_line->no;
+    if (count + curno >= g_current_user_file_ptr->line_count) {
+      dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_NUMERIC_FORMAT));
+    } else {
+      buffer_clear(g_lines_copied_ptr);
+      struct line_st *linep;
+      struct line_st *newlinep;
+      for (INT32 i = 0; i < count; i++) {
+	linep = buffer_get_line(g_current_user_file_ptr, curno + i);
+	newlinep = line_new();
+	CHAR8 *strp = linep->text;
+	if (!IS_NULL(strp)) {
+	  line_append_str(newlinep, strp);
+	} else {
+	  newlinep->text = "";
+	}
+	buffer_append_line(g_lines_copied_ptr, newlinep);
+      }
+      buffer_renum_lines(g_lines_copied_ptr);
+    }
+  }
+}
+
+static void
+on_yank_next_chars(void)
+{
+  edt_yank_chars_key();
+}
+
+static void
+on_yank_below_lines(void)
+{
+  if (!g_lines_copied_ptr->line_count) {
+    dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_BUFFER));
+    return;
+  }
+  edt_yank_lines_key(g_lines_copied_ptr);
+}
+
+static void
+on_locate_by_str(void)
+{
+  edt_find_bytext_key(get_input_bar_y());
+}
+
+static void
+on_locate_by_no(void)
+{
+  if (dlg_input_dlg(get_input_bar_y(), "Line#: ", "1")) {
+    warn_numeric_input();
+    INT32 no = atoi(g_user_input) - 1;
+    if (no > g_current_user_file_ptr->line_count - 1) {
+      dlg_msgbox(get_input_bar_y(), errtype_to_str(ERROR_NUMERIC_FORMAT));
+    } else {
+      edt_find_byno_key(no);
+    }
+  }
+}
+
+static void
+on_to_prev_buffer(void)
+{
+  warn_switch_buffer();
+  if (!g_current_user_file_idx) {
+    g_current_user_file_idx = g_user_files_count;
+  }
+  activate_buffer(g_current_user_file_idx - 1);
+}
+
+static void
+on_to_next_buffer(void)
+{
+  warn_switch_buffer();
+  if (g_current_user_file_idx == g_user_files_count - 1) {
+    g_current_user_file_idx = -1;
+  }
+  activate_buffer(g_current_user_file_idx + 1);
+}
+
+static void
+on_refresh_screen(void)
+{
+  on_sigwinch(0);
+}
+
+static void
+event_loop()
+{
+  command_handler_func *funcp = NULL;
+  INT32 key, secbyte;
+  while ((key = (INT32) wgetch(g_text_area)) != KS_EXIT) {
+    dlg_remove();
+    if (KS_CANCEL_INPUT == key) {
+      secbyte = (INT32) wgetch(g_text_area);
+      funcp = (ERR != secbyte) ? get_meta_key_handler(secbyte) : flash_screen;
+    } else if (key == KEY_RESIZE) {
+      on_sigwinch();
+    } else {
+      funcp = get_ctrl_key_handler(key);
+    }
+    if (!IS_NULL(funcp)) {
+      funcp();
+    } else {
+      edt_accept_key(key);
+    }
+  }
+  if (!dlg_yesno_dlg(get_input_bar_y(), "Exit?(yes/no): ", "no")) {
+    event_loop();
+  }
+  on_save_all_files();
+}
